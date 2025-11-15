@@ -4,7 +4,7 @@ Module: llm_recommender.py
 """
 
 from typing import Dict, Any
-import genai
+import google.generativeai as genai
 
 MODEL_ID = "gemini-2.5-flash"
 
