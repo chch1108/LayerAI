@@ -1,6 +1,6 @@
 """
 Module: llm_recommender.py
-功能: 使用 Hugging Face 推論 API 生成逐層 3D 列印回流優化建議
+功能: 使用 Hugging Face Router API 生成逐層 3D 列印回流優化建議
 """
 
 import streamlit as st
@@ -11,16 +11,14 @@ from typing import Dict, Any
 # --- Constants ---
 MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
 SECRET_NAME = "HF_TOKEN"
-
-# 正確 API URL
-API_URL = f"https://api-inference.huggingface.co/models/{MODEL_NAME}"
+API_URL = "https://router.huggingface.co/hf-inference"  # Router endpoint
 
 def get_llm_recommendation(
     input_params: Dict[str, Any], 
     feature_importances: Dict[str, float]
 ) -> str:
     """
-    Generates printing parameter recommendations using Hugging Face Inference API.
+    Generates printing parameter recommendations using Hugging Face Router API.
     """
 
     # --- 1. 讀取 Hugging Face Token ---
@@ -66,12 +64,13 @@ Keep the format clean and easy to read.
 [/INST]
 """
 
-    # --- 3. 呼叫 Hugging Face API ---
+    # --- 3. 呼叫 Hugging Face Router API ---
     headers = {
         "Authorization": f"Bearer {hf_token}",
         "Content-Type": "application/json"
     }
     payload = {
+        "model": MODEL_NAME,
         "inputs": prompt,
         "parameters": {
             "max_new_tokens": 250,
