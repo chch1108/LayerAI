@@ -4,8 +4,9 @@ import json
 from typing import Dict, Any
 
 # --- Constants ---
-# Using a recommended instruction-following model from Hugging Face
+# The new recommended endpoint for Hugging Face Serverless Inference
 API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
 SECRET_ENV_VAR = "HF_TOKEN"
 
 def get_llm_recommendation(
@@ -74,7 +75,9 @@ Keep the format clean and easy to read.
         "Authorization": f"Bearer {hf_token}",
         "Content-Type": "application/json"
     }
+    # The payload now includes the model name, as we are using a general router endpoint.
     payload = {
+        "model": MODEL_NAME,
         "inputs": prompt,
         "parameters": {
             "max_new_tokens": 250,
@@ -83,11 +86,31 @@ Keep the format clean and easy to read.
         }
     }
 
+    # The new endpoint URL from the error message
+    new_api_url = "https://router.huggingface.co/hf-inference"
+
     try:
-        print("Sending request to Hugging Face LLM for recommendation...")
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=45)
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx) 
+        print(f"Sending request to new Hugging Face endpoint: {new_api_url}...")
+        response = requests.post(new_api_url, headers=headers, json=payload, timeout=45)
         
+        # Check for HTTP errors
+        if response.status_code >= 400:
+            error_body = response.json()
+            error_message = error_body.get("error", str(response.text))
+            # Specifically handle the old endpoint error message if it appears again
+            if "is no longer supported" in error_message:
+                 error_message = "The Hugging Face API endpoint is still incorrect. Please check for the latest documentation."
+            
+            if response.status_code == 401:
+                 return (
+                    "**LLM Recommender Error:**\n"
+                    "Authentication failed. Your Hugging Face API Token is likely invalid or expired.\n\n"
+                    "**To fix this:**\n"
+                    "1. Verify your token is correct in Streamlit's 'Secrets' settings.\n"
+                    f"2. Ensure it is formatted as: `{SECRET_ENV_VAR}='hf_...'`"
+                )
+            raise requests.exceptions.HTTPError(f"HTTP {response.status_code}: {error_message}")
+
         result = response.json()
         
         if result and isinstance(result, list) and "generated_text" in result[0]:
@@ -98,17 +121,7 @@ Keep the format clean and easy to read.
             raise ValueError(f"Unexpected API response format: {result}")
 
     except requests.exceptions.HTTPError as http_err:
-        error_body = response.json()
-        error_message = error_body.get("error", str(http_err))
-        if response.status_code == 401:
-             return (
-                "**LLM Recommender Error:**\n"
-                "Authentication failed. Your Hugging Face API Token is likely invalid or expired.\n\n"
-                "**To fix this:**\n"
-                "1. Verify your token is correct in Streamlit's 'Secrets' settings.\n"
-                f"2. Ensure it is formatted as: `{SECRET_ENV_VAR}='hf_...'`"
-            )
-        return f"**LLM Recommender Error:**\nHTTP Error: {error_message}"
+        return f"**LLM Recommender Error:**\n{http_err}"
     except Exception as e:
         print(f"An error occurred with the LLM API call: {e}")
         return f"**LLM Recommender Error:**\nAn unexpected error occurred: {e}"
