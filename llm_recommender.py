@@ -4,7 +4,9 @@ import json
 from typing import Dict, Any
 
 # --- Constants ---
-API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+# Use the new, correct router endpoint as instructed by the API error message.
+API_URL = "https://router.huggingface.co/hf-inference"
+MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
 SECRET_ENV_VAR = "HF_TOKEN"
 
 def get_llm_recommendation(
@@ -12,18 +14,8 @@ def get_llm_recommendation(
     feature_importances: Dict[str, float]
 ) -> str:
     """
-    Generates printing parameter recommendations using a Hugging Face
-    Inference API model (Mistral-7B-Instruct).
-
-    Args:
-        input_params (Dict[str, Any]): The dictionary of input parameters that
-                                       led to the predicted failure.
-        feature_importances (Dict[str, float]): A dictionary mapping feature
-                                                names to their importance scores.
-
-    Returns:
-        str: A string containing the optimization advice from the LLM.
-             Returns an error message if the API call fails.
+    Generates printing parameter recommendations using the Hugging Face
+    serverless Inference API.
     """
     hf_token = os.getenv(SECRET_ENV_VAR)
     if not hf_token:
@@ -72,7 +64,9 @@ Keep the format clean and easy to read.
         "Authorization": f"Bearer {hf_token}",
         "Content-Type": "application/json"
     }
+    # The payload for the router includes the model name.
     payload = {
+        "model": MODEL_NAME,
         "inputs": prompt,
         "parameters": {
             "max_new_tokens": 250,
@@ -82,13 +76,11 @@ Keep the format clean and easy to read.
     }
 
     try:
-        print(f"Sending request to Hugging Face endpoint: {API_URL}...")
+        print(f"Sending request to new Hugging Face endpoint: {API_URL}...")
         response = requests.post(API_URL, headers=headers, json=payload, timeout=45)
         
-        # Raise an exception for bad status codes (4xx or 5xx)
         response.raise_for_status()
         
-        # Handle non-JSON or empty responses
         try:
             result = response.json()
         except json.JSONDecodeError:
@@ -98,7 +90,6 @@ Keep the format clean and easy to read.
                 f"(Details: Received a non-JSON response from the API)"
             )
 
-        # Handle "model is loading" error within a successful (200) response
         if isinstance(result, dict) and "error" in result:
             error_message = result.get("error")
             if isinstance(error_message, str) and "loading" in error_message.lower():
@@ -111,7 +102,6 @@ Keep the format clean and easy to read.
             else:
                 raise ValueError(f"API returned an error in the JSON body: {error_message}")
 
-        # Handle successful response
         if result and isinstance(result, list) and "generated_text" in result[0]:
             recommendation = result[0]["generated_text"].strip()
             print("LLM recommendation received.")
