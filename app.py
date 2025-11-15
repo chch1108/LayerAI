@@ -49,17 +49,23 @@ with col1:
 with col2:
     st.header("2. 預測結果與建議")
     if predict_button:
-        # --- 延遲初始化 GenAI ---
+        # --- Step 1: 讀取並確認 GenAI API Key ---
         genai_api_key = st.secrets.get("GENAI_API_KEY") or os.getenv("GENAI_API_KEY")
         if not genai_api_key:
             st.error("GenAI API Key 未設定！請在 Streamlit Secrets 或環境變數中設定。")
         else:
-            genai.configure(api_key=genai_api_key)
+            # --- Step 2: 延遲初始化 GenAI SDK ---
+            try:
+                genai.configure(api_key=genai_api_key)
+            except Exception as e:
+                st.error(f"初始化 GenAI SDK 發生錯誤: {e}")
 
+            # --- Step 3: 檢查是否上傳圖像 ---
             if uploaded_file is None:
                 st.error("請先上傳圖像文件。")
             else:
                 with st.spinner("處理中... 正在分析圖像並執行預測..."):
+                    # --- Image Processing ---
                     temp_image_path = f"temp_{uploaded_file.name}"
                     with open(temp_image_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
