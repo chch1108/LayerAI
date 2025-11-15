@@ -1,8 +1,3 @@
-"""
-Module: llm_recommender.py
-功能: 使用 Gemini-2.5-Flash 模型生成逐層 3D 列印回流優化建議
-"""
-
 from typing import Dict, Any
 import google.generativeai as genai
 
@@ -13,9 +8,6 @@ def get_llm_recommendation(input_params: Dict[str, Any], feature_importances: Di
     根據每層的製程參數與模型判定的影響因子，
     使用 Gemini-2.5-Flash 中文模型生成列印優化建議。
     """
-
-    if not genai.api_key:
-        return "**LLM Recommender Error:** GenAI API Key 未設定。"
 
     # --- Prompt 準備 ---
     sorted_imp = sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)
