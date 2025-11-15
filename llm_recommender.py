@@ -4,9 +4,7 @@ import json
 from typing import Dict, Any
 
 # --- Constants ---
-# The new recommended endpoint for Hugging Face Serverless Inference
 API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
-MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
 SECRET_ENV_VAR = "HF_TOKEN"
 
 def get_llm_recommendation(
@@ -43,7 +41,6 @@ def get_llm_recommendation(
     params_str = "\n".join([f"- {key}: {value}" for key, value in input_params.items()])
     importances_str = "\n".join([f"- {feat}: {imp:.3f}" for feat, imp in sorted_importances[:5]])
 
-    # Using Mistral's instruction format for better results
     prompt = f"""
 [INST]
 You are an expert AI assistant for DLP 3D printing.
@@ -75,44 +72,46 @@ Keep the format clean and easy to read.
         "Authorization": f"Bearer {hf_token}",
         "Content-Type": "application/json"
     }
-    # The payload now includes the model name, as we are using a general router endpoint.
     payload = {
-        "model": MODEL_NAME,
         "inputs": prompt,
         "parameters": {
             "max_new_tokens": 250,
             "temperature": 0.6,
-            "return_full_text": False, # Only return the generated part
+            "return_full_text": False,
         }
     }
 
-    # The new endpoint URL from the error message
-    new_api_url = "https://router.huggingface.co/hf-inference"
-
     try:
-        print(f"Sending request to new Hugging Face endpoint: {new_api_url}...")
-        response = requests.post(new_api_url, headers=headers, json=payload, timeout=45)
+        print(f"Sending request to Hugging Face endpoint: {API_URL}...")
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=45)
         
-        # Check for HTTP errors
-        if response.status_code >= 400:
-            error_body = response.json()
-            error_message = error_body.get("error", str(response.text))
-            # Specifically handle the old endpoint error message if it appears again
-            if "is no longer supported" in error_message:
-                 error_message = "The Hugging Face API endpoint is still incorrect. Please check for the latest documentation."
-            
-            if response.status_code == 401:
-                 return (
-                    "**LLM Recommender Error:**\n"
-                    "Authentication failed. Your Hugging Face API Token is likely invalid or expired.\n\n"
-                    "**To fix this:**\n"
-                    "1. Verify your token is correct in Streamlit's 'Secrets' settings.\n"
-                    f"2. Ensure it is formatted as: `{SECRET_ENV_VAR}='hf_...'`"
-                )
-            raise requests.exceptions.HTTPError(f"HTTP {response.status_code}: {error_message}")
+        # Raise an exception for bad status codes (4xx or 5xx)
+        response.raise_for_status()
+        
+        # Handle non-JSON or empty responses
+        try:
+            result = response.json()
+        except json.JSONDecodeError:
+            return (
+                "**LLM Status:** The model is likely loading on the server. "
+                "This is common on the first request. **Please try again in about 30-60 seconds.**\n\n"
+                f"(Details: Received a non-JSON response from the API)"
+            )
 
-        result = response.json()
-        
+        # Handle "model is loading" error within a successful (200) response
+        if isinstance(result, dict) and "error" in result:
+            error_message = result.get("error")
+            if isinstance(error_message, str) and "loading" in error_message.lower():
+                estimated_time = result.get("estimated_time", "30")
+                return (
+                    f"**LLM Status:** The model is currently loading on the server. "
+                    f"**Please try again in about {estimated_time} seconds.**\n\n"
+                    f"(Details: {error_message})"
+                )
+            else:
+                raise ValueError(f"API returned an error in the JSON body: {error_message}")
+
+        # Handle successful response
         if result and isinstance(result, list) and "generated_text" in result[0]:
             recommendation = result[0]["generated_text"].strip()
             print("LLM recommendation received.")
@@ -121,7 +120,16 @@ Keep the format clean and easy to read.
             raise ValueError(f"Unexpected API response format: {result}")
 
     except requests.exceptions.HTTPError as http_err:
-        return f"**LLM Recommender Error:**\n{http_err}"
+        error_body = response.text
+        if response.status_code == 401:
+             return (
+                "**LLM Recommender Error:**\n"
+                "Authentication failed. Your Hugging Face API Token is likely invalid or expired.\n\n"
+                "**To fix this:**\n"
+                "1. Verify your token is correct in Streamlit's 'Secrets' settings.\n"
+                f"2. Ensure it is formatted as: `{SECRET_ENV_VAR}='hf_...'`"
+            )
+        return f"**LLM Recommender Error:**\nHTTP Error {response.status_code}: {error_body}"
     except Exception as e:
         print(f"An error occurred with the LLM API call: {e}")
         return f"**LLM Recommender Error:**\nAn unexpected error occurred: {e}"
