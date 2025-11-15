@@ -1,143 +1,88 @@
+"""
+Module: llm_recommender.py
+功能: 使用 Gemini-2.5-Flash 模型生成逐層 3D 列印回流優化建議
+"""
+
 import os
 import requests
 import json
 from typing import Dict, Any
+import streamlit as st
+
+# --- GenAI SDK 配置，從 Streamlit Secrets 讀取 ---
+import genai
+API_SECRET_NAME = "GENAI_API_KEY"
+genai_api_key = st.secrets.get(API_SECRET_NAME) or os.getenv(API_SECRET_NAME)
+if not genai_api_key:
+    st.error(f"{API_SECRET_NAME} 未設定！請到 Streamlit Secrets 或環境變數設定你的 API Key。")
+genai.configure(api_key=genai_api_key)
 
 # --- Constants ---
-# Switching to the user-suggested Chinese reasoning model.
-MODEL_ID = "RayTsai/chinese-reasoning-qwen2.5-7b"
-API_URL = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
-SECRET_ENV_VAR = "HF_TOKEN"
+MODEL_ID = "gemini-2.5-flash"
+API_URL = "https://router.huggingface.co/hf-inference"
 
 def get_llm_recommendation(
-    input_params: Dict[str, Any], 
+    input_params: Dict[str, Any],
     feature_importances: Dict[str, float]
 ) -> str:
     """
-    Generates printing parameter recommendations using a Hugging Face
-    Inference API model (Qwen2.5-7B).
+    根據每層的製程參數與模型判定的影響因子，使用 Gemini-2.5-Flash 中文模型生成列印優化建議。
     """
-    hf_token = os.getenv(SECRET_ENV_VAR)
-    if not hf_token:
-        return (
-            f"**LLM Recommender Error:**\n"
-            f"{SECRET_ENV_VAR} environment variable not set.\n\n"
-            "**To fix this:**\n"
-            "1. Get a free API Token from Hugging Face (`https://huggingface.co/settings/tokens`).\n"
-            f"2. In your Streamlit app's 'Settings' -> 'Secrets', set the secret as:\n"
-            f"   `{SECRET_ENV_VAR}='your_token_here'`"
-        )
+    if not genai.api_key:
+        return f"**LLM Recommender Error:** {API_SECRET_NAME} 未設定。"
 
-    # --- 1. Prepare the Prompt for Qwen2 ---
-    # Qwen2 models use a specific chat template.
-    sorted_importances = sorted(feature_importances.items(), key=lambda item: item[1], reverse=True)
-    params_str = "\n".join([f"- {key}: {value}" for key, value in input_params.items()])
-    importances_str = "\n".join([f"- {feat}: {imp:.3f}" for feat, imp in sorted_importances[:5]])
+    # --- Prompt 準備 ---
+    sorted_imp = sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)
+    params_str = "\n".join([f"- {k}: {v}" for k, v in input_params.items()])
+    importances_str = "\n".join([f"- {feat}: {imp:.3f}" for feat, imp in sorted_imp[:5]])
 
-    user_content = f"""
-A DLP 3D printing process for a single layer is predicted to fail due to incomplete resin reflow.
-Based on the data below, provide two concise, actionable, and numerical recommendations in Traditional Chinese to fix the issue.
+    prompt = (
+        f"一個 DLP 3D 列印的單層被預測為「樹脂回流不完全」。\n"
+        f"請根據下面的製程參數與關鍵影響因素，以繁體中文提供兩項可執行的優化建議："
+        f"\n\n列印參數：\n{params_str}"
+        f"\n\n最具影響力因素：\n{importances_str}"
+        f"\n\n回覆格式：\n"
+        f"1. 建議項目：\n"
+        f"   - 目前數值：xxx\n"
+        f"   - 建議數值：yyy\n"
+        f"   - 原因：zzz\n"
+        f"\n2. 建議項目：\n"
+        f"   - 目前數值：xxx\n"
+        f"   - 建議數值：yyy\n"
+        f"   - 原因：zzz\n"
+    )
 
-**Printing Parameters Used:**
-{params_str}
-
-**Most Influential Factors:**
-{importances_str}
-
-**Your Task:**
-Provide recommendations in Traditional Chinese. For each recommendation, provide the current value, the suggested new value, and a brief reason.
-
-**Example Response Format:**
-**1. 增加等待時間:**
-   - **目前數值:** 0.5s
-   - **建議數值:** 1.0s
-   - **原因:** 增加等待時間能給予樹脂更充分的時間回流，這是解決回流問題最直接的方法。
-"""
-
-    # Constructing the prompt using the Qwen2 chat template
-    prompt = f"<|im_start|>system\nYou are an expert AI assistant for DLP 3D printing.<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
-
-
-    # --- 2. Call the Hugging Face API ---
-    headers = {
-        "Authorization": f"Bearer {hf_token}",
-        "Content-Type": "application/json"
-    }
+    # --- Payload 建構（chat-style）---
     payload = {
-        "inputs": prompt,
+        "model": MODEL_ID,
+        "inputs": [
+            {"role": "system", "content": "你是 3D 列印製程優化專家。"},
+            {"role": "user", "content": prompt}
+        ],
         "parameters": {
             "max_new_tokens": 300,
-            "temperature": 0.6,
-            "return_full_text": False,
+            "temperature": 0.7,
+            "top_p": 0.9
         }
+    }
+
+    headers = {
+        "Authorization": f"Bearer {genai.api_key}",
+        "Content-Type": "application/json"
     }
 
     try:
-        print(f"Sending request to Hugging Face endpoint: {API_URL}...")
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=60) # Increased timeout for larger model
-        
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
         response.raise_for_status()
-        
-        try:
-            result = response.json()
-        except json.JSONDecodeError:
-            return (
-                "**LLM Status:** The model is likely loading on the server. "
-                "This is common on the first request. **Please try again in about 60-90 seconds.**\n\n"
-                f"(Details: Received a non-JSON response from the API)"
-            )
+        result = response.json()
 
         if isinstance(result, dict) and "error" in result:
-            error_message = result.get("error")
-            if isinstance(error_message, str) and "loading" in error_message.lower():
-                estimated_time = result.get("estimated_time", "60")
-                return (
-                    f"**LLM Status:** The model is currently loading on the server. "
-                    f"**Please try again in about {estimated_time:.0f} seconds.**\n\n"
-                    f"(Details: {error_message})"
-                )
-            else:
-                raise ValueError(f"API returned an error in the JSON body: {error_message}")
-
-        if result and isinstance(result, list) and "generated_text" in result[0]:
-            recommendation = result[0]["generated_text"].strip()
-            # Clean up potential model-specific end tokens
-            if "<|im_end|>" in recommendation:
-                recommendation = recommendation.split("<|im_end|>")[0].strip()
-            print("LLM recommendation received.")
-            return recommendation
-        else:
-            raise ValueError(f"Unexpected API response format: {result}")
+            return f"**LLM Recommender Error:** {result['error']}"
+        if isinstance(result, list) and "generated_text" in result[0]:
+            return result[0]["generated_text"].strip()
+        return f"**LLM Recommender Error:** Unexpected response format: {result}"
 
     except requests.exceptions.HTTPError as http_err:
-        error_body = response.text
-        if response.status_code == 401:
-             return (
-                "**LLM Recommender Error:**\n"
-                "Authentication failed. Your Hugging Face API Token is likely invalid or expired."
-            )
-        return f"**LLM Recommender Error:**\nHTTP Error {response.status_code}: {error_body}"
+        return f"**LLM Recommender Error:** HTTP {response.status_code}: {response.text}"
     except Exception as e:
-        print(f"An error occurred with the LLM API call: {e}")
-        return f"**LLM Recommender Error:**\nAn unexpected error occurred: {e}"
-
-
-if __name__ == '__main__':
-    print("--- Running a test recommendation with Hugging Face API ---")
-    
-    if not os.getenv(SECRET_ENV_VAR):
-        print(f"Skipping test: {SECRET_ENV_VAR} not set.")
-    else:
-        sample_params = {
-            '形狀': '90x45矩形', '材料黏度 (cps)': 150, '抬升高度(μm)': 2000,
-            '抬升速度(μm/s)': 1000, '等待時間(s)': 0.5, '下降速度((μm)/s)': 4000,
-            '面積(mm?)': 4034.83, '周長(mm)': 269.6, '水力直徑(mm)': 59.86
-        }
-        sample_importances = {
-            '抬升速度(μm/s)': 0.35, '等待時間(s)': 0.25, '水力直徑(mm)': 0.15,
-            '面積(mm?)': 0.12, '材料黏度 (cps)': 0.08, '抬升高度(μm)': 0.05
-        }
-        recommendation = get_llm_recommendation(sample_params, sample_importances)
-        print("\n--- LLM Recommendation ---")
-        print(recommendation)
-        print("--------------------------")
+        return f"**LLM Recommender Error:** Unexpected exception: {e}"
