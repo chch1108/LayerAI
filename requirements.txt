@@ -6,4 +6,4 @@ opencv-python-headless
 requests
 joblib
 Pillow
-genai
+google-generativeai>=0.2.3
