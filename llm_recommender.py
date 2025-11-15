@@ -14,6 +14,9 @@ def get_llm_recommendation(input_params: Dict[str, Any], feature_importances: Di
     使用 Gemini-2.5-Flash 中文模型生成列印優化建議。
     """
 
+    if not genai.api_key:
+        return "**LLM Recommender Error:** GenAI API Key 未設定。"
+
     # --- Prompt 準備 ---
     sorted_imp = sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)
     params_str = "\n".join([f"- {k}: {v}" for k, v in input_params.items()])
@@ -36,18 +39,14 @@ def get_llm_recommendation(input_params: Dict[str, Any], feature_importances: Di
     )
 
     try:
-        response = genai.chat.completions.create(
-            model=MODEL_ID,
-            messages=[
-                {"role": "system", "content": "你是 3D 列印製程優化專家。"},
-                {"role": "user", "content": prompt}
-            ],
+        # 使用 GenerativeModel 單輪生成
+        model = genai.GenerativeModel(MODEL_ID)
+        response = model.generate_content(
+            prompt,
             temperature=0.7,
             max_output_tokens=300
         )
-
-        text = response.choices[0].content.strip()
-        return text
+        return response.text.strip()
 
     except Exception as e:
         return f"**LLM Recommender Error:** 發生錯誤: {e}"
