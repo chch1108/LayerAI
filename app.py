@@ -4,7 +4,7 @@ import os
 from PIL import Image
 import google.generativeai as genai
 
-# --- 初始化 GenAI SDK (一開始就設定) ---
+# --- 從 Streamlit Secrets 或環境變數讀取 API Key ---
 genai_api_key = st.secrets.get("GENAI_API_KEY") or os.getenv("GENAI_API_KEY")
 if not genai_api_key:
     st.error("GenAI API Key 未設定！請在 Streamlit Secrets 或環境變數中設定。")
