@@ -4,9 +4,8 @@ import json
 from typing import Dict, Any
 
 # --- Constants ---
-# Switching to the user-suggested Chinese reasoning model.
-MODEL_ID = "RayTsai/chinese-reasoning-qwen2.5-7b"
-API_URL = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
+MODEL_ID = "RayTsai/chinese-reasoning-qwen2.5-7b"  # 中文推理模型
+API_URL = "https://router.huggingface.co/hf-inference"  # Router API endpoint
 SECRET_ENV_VAR = "HF_TOKEN"
 
 def get_llm_recommendation(
@@ -15,7 +14,7 @@ def get_llm_recommendation(
 ) -> str:
     """
     Generates printing parameter recommendations using a Hugging Face
-    Inference API model (Qwen2.5-7B).
+    Router API with a Chinese reasoning model (Qwen2.5-7B).
     """
     hf_token = os.getenv(SECRET_ENV_VAR)
     if not hf_token:
@@ -28,103 +27,78 @@ def get_llm_recommendation(
             f"   `{SECRET_ENV_VAR}='your_token_here'`"
         )
 
-    # --- 1. Prepare the Prompt for Qwen2 ---
-    # Qwen2 models use a specific chat template.
+    # --- 1. Prepare Prompt ---
     sorted_importances = sorted(feature_importances.items(), key=lambda item: item[1], reverse=True)
     params_str = "\n".join([f"- {key}: {value}" for key, value in input_params.items()])
     importances_str = "\n".join([f"- {feat}: {imp:.3f}" for feat, imp in sorted_importances[:5]])
 
     user_content = f"""
-A DLP 3D printing process for a single layer is predicted to fail due to incomplete resin reflow.
-Based on the data below, provide two concise, actionable, and numerical recommendations in Traditional Chinese to fix the issue.
+一個 DLP 3D 列印單層預測失敗，原因為樹脂回流不完全。
+根據下列參數，請提供兩項簡明可執行、帶數值的建議來改善此問題，請以繁體中文說明。
 
-**Printing Parameters Used:**
+**列印參數:**
 {params_str}
 
-**Most Influential Factors:**
+**影響最大因素:**
 {importances_str}
 
-**Your Task:**
-Provide recommendations in Traditional Chinese. For each recommendation, provide the current value, the suggested new value, and a brief reason.
+**請求內容:**
+對每個建議，提供：
+- **目前數值**
+- **建議數值**
+- **簡短原因**
 
-**Example Response Format:**
+**範例格式:**
 **1. 增加等待時間:**
    - **目前數值:** 0.5s
    - **建議數值:** 1.0s
-   - **原因:** 增加等待時間能給予樹脂更充分的時間回流，這是解決回流問題最直接的方法。
+   - **原因:** 增加等待時間能給予樹脂更多時間回流，是解決回流問題最直接的方法。
 """
 
-    # Constructing the prompt using the Qwen2 chat template
-    prompt = f"<|im_start|>system\nYou are an expert AI assistant for DLP 3D printing.<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
+    # Qwen2 Chat Template
+    prompt = f"<|im_start|>system\n你是專家 AI 助手，專門提供 DLP 3D 列印優化建議。<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
 
-
-    # --- 2. Call the Hugging Face API ---
+    # --- 2. Call Hugging Face Router API ---
     headers = {
         "Authorization": f"Bearer {hf_token}",
         "Content-Type": "application/json"
     }
+
     payload = {
+        "model": MODEL_ID,
         "inputs": prompt,
         "parameters": {
             "max_new_tokens": 300,
             "temperature": 0.6,
-            "return_full_text": False,
+            "return_full_text": False
         }
     }
 
     try:
-        print(f"Sending request to Hugging Face endpoint: {API_URL}...")
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=60) # Increased timeout for larger model
-        
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
         response.raise_for_status()
-        
-        try:
-            result = response.json()
-        except json.JSONDecodeError:
-            return (
-                "**LLM Status:** The model is likely loading on the server. "
-                "This is common on the first request. **Please try again in about 60-90 seconds.**\n\n"
-                f"(Details: Received a non-JSON response from the API)"
-            )
+        result = response.json()
 
+        # 檢查返回格式
         if isinstance(result, dict) and "error" in result:
-            error_message = result.get("error")
-            if isinstance(error_message, str) and "loading" in error_message.lower():
-                estimated_time = result.get("estimated_time", "60")
-                return (
-                    f"**LLM Status:** The model is currently loading on the server. "
-                    f"**Please try again in about {estimated_time:.0f} seconds.**\n\n"
-                    f"(Details: {error_message})"
-                )
-            else:
-                raise ValueError(f"API returned an error in the JSON body: {error_message}")
+            return f"**LLM Recommender Error:** {result['error']}"
 
-        if result and isinstance(result, list) and "generated_text" in result[0]:
+        if isinstance(result, list) and "generated_text" in result[0]:
             recommendation = result[0]["generated_text"].strip()
-            # Clean up potential model-specific end tokens
             if "<|im_end|>" in recommendation:
                 recommendation = recommendation.split("<|im_end|>")[0].strip()
-            print("LLM recommendation received.")
             return recommendation
         else:
-            raise ValueError(f"Unexpected API response format: {result}")
+            return f"**LLM Recommender Error:** Unexpected API response format: {result}"
 
     except requests.exceptions.HTTPError as http_err:
-        error_body = response.text
-        if response.status_code == 401:
-             return (
-                "**LLM Recommender Error:**\n"
-                "Authentication failed. Your Hugging Face API Token is likely invalid or expired."
-            )
-        return f"**LLM Recommender Error:**\nHTTP Error {response.status_code}: {error_body}"
+        return f"**LLM Recommender Error:** HTTP {response.status_code}: {response.text}"
     except Exception as e:
-        print(f"An error occurred with the LLM API call: {e}")
-        return f"**LLM Recommender Error:**\nAn unexpected error occurred: {e}"
+        return f"**LLM Recommender Error:** An unexpected error occurred: {e}"
 
 
+# --- 測試範例 ---
 if __name__ == '__main__':
-    print("--- Running a test recommendation with Hugging Face API ---")
-    
     if not os.getenv(SECRET_ENV_VAR):
         print(f"Skipping test: {SECRET_ENV_VAR} not set.")
     else:
