@@ -13,8 +13,6 @@ def get_llm_recommendation(input_params: Dict[str, Any], feature_importances: Di
     根據每層的製程參數與模型判定的影響因子，
     使用 Gemini-2.5-Flash 中文模型生成列印優化建議。
     """
-    if not genai.api_key:
-        return "**LLM Recommender Error:** GenAI API Key 未設定。"
 
     # --- Prompt 準備 ---
     sorted_imp = sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)
@@ -38,7 +36,6 @@ def get_llm_recommendation(input_params: Dict[str, Any], feature_importances: Di
     )
 
     try:
-        # 使用 GenAI SDK 呼叫 Gemini-2.5-Flash
         response = genai.chat.completions.create(
             model=MODEL_ID,
             messages=[
@@ -49,7 +46,6 @@ def get_llm_recommendation(input_params: Dict[str, Any], feature_importances: Di
             max_output_tokens=300
         )
 
-        # 取得模型回覆
         text = response.choices[0].content.strip()
         return text
 
