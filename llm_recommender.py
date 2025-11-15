@@ -4,8 +4,8 @@ import json
 from typing import Dict, Any
 
 # --- Constants ---
-# Switching to a more standard, widely available model and the standard API endpoint structure.
-MODEL_ID = "google/flan-t5-large"
+# Switching to the user-suggested Chinese reasoning model.
+MODEL_ID = "RayTsai/chinese-reasoning-qwen2.5-7b"
 API_URL = f"https://api-inference.huggingface.co/models/{MODEL_ID}"
 SECRET_ENV_VAR = "HF_TOKEN"
 
@@ -15,7 +15,7 @@ def get_llm_recommendation(
 ) -> str:
     """
     Generates printing parameter recommendations using a Hugging Face
-    Inference API model (google/flan-t5-large).
+    Inference API model (Qwen2.5-7B).
     """
     hf_token = os.getenv(SECRET_ENV_VAR)
     if not hf_token:
@@ -24,27 +24,39 @@ def get_llm_recommendation(
             f"{SECRET_ENV_VAR} environment variable not set.\n\n"
             "**To fix this:**\n"
             "1. Get a free API Token from Hugging Face (`https://huggingface.co/settings/tokens`).\n"
-            "2. In your Streamlit app's 'Settings' -> 'Secrets', set the secret as:\n"
+            f"2. In your Streamlit app's 'Settings' -> 'Secrets', set the secret as:\n"
             f"   `{SECRET_ENV_VAR}='your_token_here'`"
         )
 
-    # --- 1. Prepare the Prompt for Flan-T5 ---
-    # Flan-T5 is a text-to-text model, so we create a clear, direct instruction.
+    # --- 1. Prepare the Prompt for Qwen2 ---
+    # Qwen2 models use a specific chat template.
     sorted_importances = sorted(feature_importances.items(), key=lambda item: item[1], reverse=True)
     params_str = "\n".join([f"- {key}: {value}" for key, value in input_params.items()])
     importances_str = "\n".join([f"- {feat}: {imp:.3f}" for feat, imp in sorted_importances[:5]])
 
-    prompt = f"""
-Context: A DLP 3D printing process for a single layer is predicted to fail due to incomplete resin reflow.
+    user_content = f"""
+A DLP 3D printing process for a single layer is predicted to fail due to incomplete resin reflow.
+Based on the data below, provide two concise, actionable, and numerical recommendations in Traditional Chinese to fix the issue.
 
-Printing Parameters Used:
+**Printing Parameters Used:**
 {params_str}
 
-Most Influential Factors:
+**Most Influential Factors:**
 {importances_str}
 
-Task: Based on the data above, provide two concise, actionable, and numerical recommendations to fix the resin reflow issue. For each recommendation, provide the current value, the suggested new value, and a brief reason.
+**Your Task:**
+Provide recommendations in Traditional Chinese. For each recommendation, provide the current value, the suggested new value, and a brief reason.
+
+**Example Response Format:**
+**1. 增加等待時間:**
+   - **目前數值:** 0.5s
+   - **建議數值:** 1.0s
+   - **原因:** 增加等待時間能給予樹脂更充分的時間回流，這是解決回流問題最直接的方法。
 """
+
+    # Constructing the prompt using the Qwen2 chat template
+    prompt = f"<|im_start|>system\nYou are an expert AI assistant for DLP 3D printing.<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
+
 
     # --- 2. Call the Hugging Face API ---
     headers = {
@@ -54,14 +66,15 @@ Task: Based on the data above, provide two concise, actionable, and numerical re
     payload = {
         "inputs": prompt,
         "parameters": {
-            "max_new_tokens": 200, # Flan-T5 can be a bit more verbose
-            "temperature": 0.7,
+            "max_new_tokens": 300,
+            "temperature": 0.6,
+            "return_full_text": False,
         }
     }
 
     try:
         print(f"Sending request to Hugging Face endpoint: {API_URL}...")
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=45)
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=60) # Increased timeout for larger model
         
         response.raise_for_status()
         
@@ -70,17 +83,17 @@ Task: Based on the data above, provide two concise, actionable, and numerical re
         except json.JSONDecodeError:
             return (
                 "**LLM Status:** The model is likely loading on the server. "
-                "This is common on the first request. **Please try again in about 30-60 seconds.**\n\n"
+                "This is common on the first request. **Please try again in about 60-90 seconds.**\n\n"
                 f"(Details: Received a non-JSON response from the API)"
             )
 
         if isinstance(result, dict) and "error" in result:
             error_message = result.get("error")
             if isinstance(error_message, str) and "loading" in error_message.lower():
-                estimated_time = result.get("estimated_time", "30")
+                estimated_time = result.get("estimated_time", "60")
                 return (
                     f"**LLM Status:** The model is currently loading on the server. "
-                    f"**Please try again in about {estimated_time} seconds.**\n\n"
+                    f"**Please try again in about {estimated_time:.0f} seconds.**\n\n"
                     f"(Details: {error_message})"
                 )
             else:
@@ -88,6 +101,9 @@ Task: Based on the data above, provide two concise, actionable, and numerical re
 
         if result and isinstance(result, list) and "generated_text" in result[0]:
             recommendation = result[0]["generated_text"].strip()
+            # Clean up potential model-specific end tokens
+            if "<|im_end|>" in recommendation:
+                recommendation = recommendation.split("<|im_end|>")[0].strip()
             print("LLM recommendation received.")
             return recommendation
         else:
