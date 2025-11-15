@@ -1,102 +1,124 @@
 import os
-import openai
-from openai import OpenAI, AuthenticationError, OpenAIError
+import requests
+import json
 from typing import Dict, Any
 
-# The new OpenAI v1.0+ library uses a client-based approach.
-# The client automatically reads the OPENAI_API_KEY from environment variables.
+# --- Constants ---
+# Using a recommended instruction-following model from Hugging Face
+API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+SECRET_ENV_VAR = "HF_TOKEN"
 
 def get_llm_recommendation(
     input_params: Dict[str, Any], 
     feature_importances: Dict[str, float]
 ) -> str:
     """
-    Generates printing parameter recommendations using an LLM (GPT).
-    This function is updated for openai library v1.0+.
+    Generates printing parameter recommendations using a Hugging Face
+    Inference API model (Mistral-7B-Instruct).
+
+    Args:
+        input_params (Dict[str, Any]): The dictionary of input parameters that
+                                       led to the predicted failure.
+        feature_importances (Dict[str, float]): A dictionary mapping feature
+                                                names to their importance scores.
+
+    Returns:
+        str: A string containing the optimization advice from the LLM.
+             Returns an error message if the API call fails.
     """
-    try:
-        # Instantiating the client will raise an error if the API key is not found.
-        client = OpenAI()
-    except OpenAIError:
+    hf_token = os.getenv(SECRET_ENV_VAR)
+    if not hf_token:
         return (
-            "**LLM Recommender Error:**\n"
-            "OPENAI_API_KEY environment variable not set or invalid.\n\n"
+            f"**LLM Recommender Error:**\n"
+            f"{SECRET_ENV_VAR} environment variable not set.\n\n"
             "**To fix this:**\n"
-            "1. Go to your Streamlit app's 'Settings' -> 'Secrets'.\n"
-            "2. Ensure the secret is correctly set as:\n"
-            "   `OPENAI_API_KEY='your_key_here'`"
+            "1. Get a free API Token from Hugging Face (`https://huggingface.co/settings/tokens`).\n"
+            "2. In your Streamlit app's 'Settings' -> 'Secrets', set the secret as:\n"
+            f"   `{SECRET_ENV_VAR}='your_token_here'`"
         )
 
-    # --- 1. Prepare the Prompt ---
+    # --- 1. Prepare the Prompt for Mistral ---
     sorted_importances = sorted(feature_importances.items(), key=lambda item: item[1], reverse=True)
     params_str = "\n".join([f"- {key}: {value}" for key, value in input_params.items()])
     importances_str = "\n".join([f"- {feat}: {imp:.3f}" for feat, imp in sorted_importances[:5]])
 
+    # Using Mistral's instruction format for better results
     prompt = f"""
-    You are an expert AI assistant for DLP 3D printing.
+[INST]
+You are an expert AI assistant for DLP 3D printing.
 A machine learning model has predicted a "resin reflow failure" for a single print layer with the following parameters.
 This means the resin might not have enough time or space to flow back properly before the next layer, causing print defects.
 
-    **Printing Parameters Used:**
-    {params_str}
+**Printing Parameters Used:**
+{params_str}
 
-    **Most Influential Factors (according to the model):**
-    {importances_str}
+**Most Influential Factors (according to the model):**
+{importances_str}
 
-    **Your Task:**
-    Provide concise, actionable, and numerical recommendations to fix this reflow issue.
-    Please suggest specific new values for 1-2 of the most critical parameters.
-    Explain *why* you are suggesting the change.
-    Keep the format clean and easy to read.
+**Your Task:**
+Provide concise, actionable, and numerical recommendations to fix this reflow issue.
+Please suggest specific new values for 1-2 of the most critical parameters.
+Explain *why* you are suggesting the change.
+Keep the format clean and easy to read.
 
-    **Example Response Format:**
-    **1. Increase Wait Time:**
-       - **Current:** 0.5s
-       - **Suggested:** 1.0s
-       - **Reason:** Increasing the wait time gives the resin more time to settle, which is the most direct way to resolve reflow issues.
-    
-    **2. Decrease Lifting Speed:**
-       - **Current:** 700 μm/s
-       - **Suggested:** 400 μm/s
-       - **Reason:** A slower lift speed reduces the vacuum force and allows the resin to flow back more gently.
-    """
+**Example Response Format:**
+**1. Increase Wait Time:**
+   - **Current:** 0.5s
+   - **Suggested:** 1.0s
+   - **Reason:** Increasing the wait time gives the resin more time to settle, which is the most direct way to resolve reflow issues.
+[/INST]
+"""
 
-    # --- 2. Call the LLM API (using the new syntax) ---
+    # --- 2. Call the Hugging Face API ---
+    headers = {
+        "Authorization": f"Bearer {hf_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 250,
+            "temperature": 0.6,
+            "return_full_text": False, # Only return the generated part
+        }
+    }
+
     try:
-        print("Sending request to LLM for recommendation...")
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are an expert AI assistant for DLP 3D printing."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.5,
-            max_tokens=250
-        )
-        recommendation = response.choices[0].message.content.strip()
-        print("LLM recommendation received.")
-        return recommendation
+        print("Sending request to Hugging Face LLM for recommendation...")
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=45)
+        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx) 
+        
+        result = response.json()
+        
+        if result and isinstance(result, list) and "generated_text" in result[0]:
+            recommendation = result[0]["generated_text"].strip()
+            print("LLM recommendation received.")
+            return recommendation
+        else:
+            raise ValueError(f"Unexpected API response format: {result}")
 
-    except AuthenticationError:
-        return (
-            "**LLM Recommender Error:**\n"
-            "Authentication failed. Your OpenAI API key is likely invalid or expired.\n\n"
-            "**To fix this:**\n"
-            "1. Verify your API key is correct in Streamlit's 'Secrets' settings.\n"
-            "2. Ensure it is formatted as: `OPENAI_API_KEY='your_key_here'`"
-        )
+    except requests.exceptions.HTTPError as http_err:
+        error_body = response.json()
+        error_message = error_body.get("error", str(http_err))
+        if response.status_code == 401:
+             return (
+                "**LLM Recommender Error:**\n"
+                "Authentication failed. Your Hugging Face API Token is likely invalid or expired.\n\n"
+                "**To fix this:**\n"
+                "1. Verify your token is correct in Streamlit's 'Secrets' settings.\n"
+                f"2. Ensure it is formatted as: `{SECRET_ENV_VAR}='hf_...'`"
+            )
+        return f"**LLM Recommender Error:**\nHTTP Error: {error_message}"
     except Exception as e:
         print(f"An error occurred with the LLM API call: {e}")
         return f"**LLM Recommender Error:**\nAn unexpected error occurred: {e}"
 
 
 if __name__ == '__main__':
-    # This example remains the same, as the client inside the function
-    # will pick up the key from the environment.
-    print("--- Running a test recommendation ---")
+    print("--- Running a test recommendation with Hugging Face API ---")
     
-    if not os.getenv("OPENAI_API_KEY"):
-        print("Skipping test: OPENAI_API_KEY not set.")
+    if not os.getenv(SECRET_ENV_VAR):
+        print(f"Skipping test: {SECRET_ENV_VAR} not set.")
     else:
         sample_params = {
             '形狀': '90x45矩形', '材料黏度 (cps)': 150, '抬升高度(μm)': 2000,

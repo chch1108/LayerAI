@@ -3,6 +3,6 @@ numpy
 scikit-learn
 streamlit
 opencv-python-headless
-openai
+requests
 joblib
 Pillow
