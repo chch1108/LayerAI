@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from PIL import Image
-import genai
+import google.generativeai as genai
 
 # Import 模組
 from image_processor import extract_geometric_features
