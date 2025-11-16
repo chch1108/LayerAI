@@ -40,22 +40,19 @@ def _extract_text_safe(reply):
     若正常文本不存在，嘗試 fallback，保證一定回傳文字。
     """
     try:
-        # 情況 1：標準 text
         if hasattr(reply, "text") and reply.text:
             return reply.text
 
-        # 情況 2：Deep fallback
-        if reply.candidates:
+        if hasattr(reply, "candidates") and reply.candidates:
             cand = reply.candidates[0]
-            if cand.content.parts:
+            if hasattr(cand, "content") and hasattr(cand.content, "parts") and cand.content.parts:
                 part = cand.content.parts[0]
-                if hasattr(part, "text"):
+                if hasattr(part, "text") and part.text:
                     return part.text
-
+        # fallback
+        return str(reply)
     except Exception:
-        pass
-
-    return "(LLM 無回覆內容)"
+        return "(LLM 無回覆內容)"
 
 
 # -------------------------------
@@ -64,19 +61,6 @@ def _extract_text_safe(reply):
 def llm_layer_feedback(layer_info):
     """
     為單一層生成建議。
-
-    layer_info example：
-    {
-        "layer": 12,
-        "filename": "layer012.png",
-        "orig_prob": 0.83,
-        "suggested_params": {
-            "wait_time": 4.5,
-            "lift_height": 6.0,
-            "lift_speed": 2.0
-        },
-        "suggested_prob": 0.31
-    }
     """
 
     if model is None:
@@ -109,7 +93,6 @@ def llm_layer_feedback(layer_info):
 - 風險分類：{risk_desc}
 """
 
-    # 若 Auto-Tune 有給任何建議 → 一併加入
     if sug_params:
         prompt += f"""
 【AI Auto-Tune 建議】
@@ -123,7 +106,6 @@ def llm_layer_feedback(layer_info):
 2. 若中風險：給出微調方向與可能改善幅度
 3. 若低風險：給出「結論」＋「是否需要細微優化」
 """
-
     else:
         prompt += """
 此層無 Auto-Tune 參數建議（通常為低風險）。
