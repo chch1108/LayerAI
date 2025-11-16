@@ -113,44 +113,30 @@ if uploaded and run_btn:
         )
         print("Step 4b 完成～Overlay ZIP 已生成")
 
-        # ---------------- Step 5 (整體建議) ----------------
+        # Step 5：LLM 整體建議
         st.info("產生整體 LLM 建議（所有層總結）...")
-        print("Step 5: 整體 LLM 建議")
+        
+        # 計算統計數據
+        total_layers = len(results_df)
+        high_risk_layers = sum(results_df["prob"] >= threshold)
+        avg_prob = results_df["prob"].mean()
+        max_prob = results_df["prob"].max()
+        
+        stats_summary = {
+            "total_layers": total_layers,
+            "high_risk_layers": high_risk_layers,
+            "avg_prob": avg_prob,
+            "max_prob": max_prob
+        }
+        
+        prompt_summary = None  # 可自訂 prompt，也可以用預設
+        
+        with st.spinner("LLM 正在生成整體建議，請稍候..."):
+            summary_txt = llm_summary_feedback(stats_summary, summary_prompt=prompt_summary)
+        
+        st.subheader("整體建議 / 結論")
+        st.markdown(summary_txt)
 
-        try:
-            total_layers = len(results_df)
-            high_risk_layers = results_df[results_df["prob"] >= threshold]
-            num_high_risk = len(high_risk_layers)
-            max_prob = results_df["prob"].max()
-            avg_prob = results_df["prob"].mean()
-
-            prompt_summary = f"""
-你是一位具有豐富光固化 3D 列印（DLP/LCD/CLIP）經驗的製程工程師。
-請根據以下統計資訊，提供「繁體中文」的整體建議或結論：
-
-- 總層數：{total_layers}
-- 高風險層數（失敗機率 >= {threshold:.2f}）：{num_high_risk}
-- 最大失敗機率：{max_prob:.2f}
-- 平均失敗機率：{avg_prob:.2f}
-
-請給出：
-1. 整體回流狀況評估
-2. 是否需要調整 Auto-Tune 參數或其他製程設定
-3. 可以採取的改善建議
-"""
-
-            summary_txt = llm_layer_feedback({
-                "layer": "Summary",
-                "filename": "N/A",
-                "orig_prob": avg_prob,
-                "suggested_params": None,
-                "suggested_prob": None
-            })
-            st.markdown(f"### 整體建議 / 結論\n{summary_txt}")
-            print("Step 5 完成～已生成整體建議")
-
-        except Exception as e:
-            st.markdown(f"(LLM 生成整體建議失敗: {e})")
 
         # ---------------- Step 6 ----------------
         st.info("計算時間節省與成功率改善預估...")
