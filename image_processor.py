@@ -19,21 +19,36 @@ def try_load_keras_model(model_path):
         print("載入模型失敗，改用 mock。Err:", e)
         return None
 
-def extract_images_from_zip(zip_path, out_dir):
-    imgs = []
+def extract_images_from_zip(zip_path: str, extract_to: str):
+    """
+    從使用者上傳的 ZIP 中讀取所有影像檔 (.png/.jpg/.jpeg/.bmp)
+    自動忽略非影像檔，避免 UnidentifiedImageError
+    """
+
+    valid_ext = {".png", ".jpg", ".jpeg", ".bmp"}
+
+    images = []
     filenames = []
-    with zipfile.ZipFile(zip_path, 'r') as z:
-        members = [m for m in z.namelist() if not m.endswith('/') and m.lower().endswith(('.png','.jpg','.jpeg'))]
-        def sort_key(name):
-            m = re.search(r'(\d+)', os.path.basename(name))
-            return int(m.group(1)) if m else name
-        members = sorted(members, key=sort_key)
-        for m in members:
-            data = z.read(m)
-            img = Image.open(io.BytesIO(data)).convert('L')
-            imgs.append(img.copy())
-            filenames.append(os.path.basename(m))
-    return imgs, filenames
+
+    with zipfile.ZipFile(zip_path, "r") as z:
+        for file in z.namelist():
+
+            ext = os.path.splitext(file)[1].lower()
+
+            # --- 跳過非圖片 ---
+            if ext not in valid_ext:
+                continue
+
+            try:
+                data = z.read(file)
+                img = Image.open(io.BytesIO(data)).convert("L")  # 灰階讀取
+                images.append(img)
+                filenames.append(file)
+            except Exception as e:
+                print(f"[WARNING] 無法解析影像：{file}。錯誤：{e}")
+                continue
+
+    return images, filenames
 
 def preprocess_image_for_model(pil_img, target_size=(128,128)):
     img = pil_img.resize(target_size)
