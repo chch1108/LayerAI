@@ -1,4 +1,9 @@
 import streamlit as st
+import google.generativeai as genai
+import os
+
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
 import tempfile, os, io, zipfile
 import pandas as pd
 import matplotlib.pyplot as plt
