@@ -1,40 +1,78 @@
 """
 Module: llm_recommender.py
-功能: 使用 Gemini-2.5-Flash 模型生成逐層 3D 列印回流優化建議
+功能: 讓所有層都能獲得意見（不論風險高低）
 """
 
 from typing import Dict, Any
 from google.generativeai import GenerativeModel
 
 MODEL_ID = "gemini-2.5-flash"
-
-# 初始化模型物件 (全域)
 model = GenerativeModel(MODEL_ID)
 
-def get_llm_recommendation(input_params: Dict[str, Any], feature_importances: Dict[str, float]) -> str:
+def llm_layer_feedback(layer_info: Dict[str, Any]) -> str:
     """
-    使用 Gemini-2.5-Flash 中文模型生成逐層 3D 列印回流優化建議
+    根據層的預測結果提供建議或總結。
+    layer_info 包含:
+    {
+        "layer": int,
+        "filename": str,
+        "orig_prob": float,
+        "suggested_params": {...} or None,
+        "suggested_prob": float or None
+    }
     """
+
+    layer = layer_info.get("layer")
+    filename = layer_info.get("filename")
+    prob = float(layer_info.get("orig_prob", 0.0))
+
+    sug_params = layer_info.get("suggested_params", None)
+    sug_prob = layer_info.get("suggested_prob", None)
+
+    # 根據風險分類（你可以自行調整門檻）
+    if prob >= 0.50:
+        risk_desc = "高風險（樹脂回流不完全可能性大）"
+    elif prob >= 0.20:
+        risk_desc = "中度風險（可能需部分微調）"
+    else:
+        risk_desc = "低風險（回流基本正常）"
+
+    # --- Prompt 設計 ---
+    prompt = f"""
+你是熟悉 DLP/LCD/CLIP 光固化列印的製程工程師。
+請根據以下資訊，提供「繁體中文」層級建議或結論。
+
+【層資訊】
+- 層號：{layer}
+- 檔名：{filename}
+
+【模型預測】
+- 原始失敗機率：{prob:.3f}
+- 風險評估：{risk_desc}
+
+"""
+
+    if sug_params and sug_prob is not None:
+        prompt += f"""
+【AI Auto-Tune 建議參數】
+- wait_time：{sug_params.get('wait_time')}
+- lift_height：{sug_params.get('lift_height')}
+- lift_speed：{sug_params.get('lift_speed')}
+- 調整後預期失敗機率：{sug_prob:.3f}
+
+請依據風險程度，給出合適的建議或結論：
+1. 如果風險高：請提供具體可執行的參數調整建議。
+2. 如果風險中等：請給出可微調、可改善的方向。
+3. 如果風險低：請給出維持良好狀態的結論，並可附帶「是否還需要優化」的簡短說明。
+"""
+    else:
+        prompt += """
+此層沒有 Auto-Tune 資料。
+請依據預測機率給出相對應的建議或結論。
+"""
+
     try:
-        # --- Prompt 準備 ---
-        sorted_imp = sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)
-        params_str = "\n".join([f"- {k}: {v}" for k, v in input_params.items()])
-        importances_str = "\n".join([f"- {feat}: {imp:.3f}" for feat, imp in sorted_imp[:5]])
-
-        prompt = (
-            f"你是一個 DLP 3D 列印製程優化專家。\n"
-            f"單層被預測為「樹脂回流不完全」。\n"
-            f"請根據下列製程參數與關鍵影響因素，提供兩項可執行優化建議（繁體中文）："
-            f"\n\n列印參數：\n{params_str}"
-            f"\n\n最具影響力因素：\n{importances_str}"
-            f"\n\n回覆格式：\n"
-            f"1. 建議項目：\n   - 目前數值：xxx\n   - 建議數值：yyy\n   - 原因：zzz\n"
-            f"2. 建議項目：\n   - 目前數值：xxx\n   - 建議數值：yyy\n   - 原因：zzz\n"
-        )
-
-        # --- 呼叫 GenerativeModel 生成內容 ---
-        response = model.generate_content(prompt)
-        return response.text
-
+        reply = model.generate_content(prompt)
+        return reply.text
     except Exception as e:
-        return f"**LLM Recommender Error:** 發生錯誤: {e}"
+        return f"[LLM Error] {e}"
