@@ -6,7 +6,7 @@ import io, zipfile, os, tempfile
 # -------------------------------
 # 匯入 LLM 與 RF 模型
 # -------------------------------
-from llm_recommender import llm_layer_feedback
+from llm_recommender import llm_highrisk_feedback
 from model_train import load_model_and_predict, INPUT_FEATURES
 
 # 假設你的 features_df 已經包含每層數值特徵
