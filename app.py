@@ -17,7 +17,7 @@ from image_processor import (
 )
 
 from image_editor_level1 import overlay_issue_markers
-from llm_recommender import llm_layer_feedback
+from llm_recommender import llm_summary_feedback
 
 MODEL_PATH = "model.h5"
 
