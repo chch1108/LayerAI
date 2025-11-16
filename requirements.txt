@@ -1,9 +1,32 @@
+# 基本資料處理
 pandas
 numpy
+
+# 機器學習
 scikit-learn
+
+# Streamlit 主程式
 streamlit
+
+# 影像處理（Cloud 版需使用 headless）
 opencv-python-headless
+
+# HTTP
 requests
+
+# Model 讀寫
 joblib
+
+# PIL
 Pillow
+
+# Gemini API
 google-generativeai>=0.2.3
+
+# 新增：Heatmap / 互動式圖表
+plotly
+
+# 新增：matplotlib（部分圖表或備用）
+matplotlib
+
+tensorflow==2.12.0
