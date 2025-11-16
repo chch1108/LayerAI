@@ -138,14 +138,27 @@ if uploaded and run_btn:
 
             # 如果 Auto-Tune 有該層
             match = suggestion_df[suggestion_df["layer"] == row["layer"]]
+
             if len(match) > 0:
                 m = match.iloc[0]
-                layer_info["suggested_params"] = {
-                    "wait_time": m["wait_time"],
-                    "lift_height": m["lift_height"],
-                    "lift_speed": m["lift_speed"]
-                }
-                layer_info["suggested_prob"] = m["suggested_prob"]
+            
+                # 若欄位存在才放入（避免 KeyError）
+                params = {}
+                for key in ["wait_time", "lift_height", "lift_speed"]:
+                    if key in m:
+                        params[key] = m[key]
+            
+                # 若找到至少一個參數就存
+                layer_info["suggested_params"] = params if len(params) > 0 else None
+            
+                # 建議後預測機率
+                layer_info["suggested_prob"] = m["suggested_prob"] if "suggested_prob" in m else None
+            
+            else:
+                # 沒有 Auto-Tune（低風險層）
+                layer_info["suggested_params"] = None
+                layer_info["suggested_prob"] = None
+
 
             txt = llm_layer_feedback(layer_info)
             st.markdown(f"### Layer {int(row['layer'])}\n{txt}")
