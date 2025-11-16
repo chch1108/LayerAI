@@ -113,53 +113,41 @@ def train_and_save_model():
 def load_model_and_predict(input_data: pd.DataFrame):
     """
     Loads the saved model pipeline and makes a prediction.
-
-    Args:
-        input_data (pd.DataFrame): A DataFrame with a single row of input features.
-                                   Column names must match the training features.
-
-    Returns:
-        tuple: A tuple containing:
-               - prediction (int): The predicted class (0 or 1).
-               - feature_importances (dict): A dictionary of feature importances.
+    Returns probability (float 0~1) for class 1 (失敗) and feature importances.
     """
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(f"Model file not found at {MODEL_PATH}. Please run training first.")
 
-    # Load the artifacts
     artifacts = joblib.load(MODEL_PATH)
     model_pipeline = artifacts['pipeline']
     trained_columns = artifacts['columns']
 
     # Preprocess input data to match training columns
-    # Create a DataFrame with the same columns as the training data, filled with 0
     processed_input = pd.DataFrame(columns=trained_columns, index=input_data.index)
-    
-    # One-hot encode the input data
     input_encoded = pd.get_dummies(input_data, columns=CATEGORICAL_FEATURES, drop_first=True)
 
-    # Fill the processed_input DataFrame with values from the encoded input
     for col in input_encoded.columns:
         if col in processed_input.columns:
             processed_input[col] = input_encoded[col]
-            
+
     processed_input.fillna(0, inplace=True)
-    
-    # Ensure the column order is the same
     processed_input = processed_input[trained_columns]
 
-    # Make prediction
-    prediction = model_pipeline.predict(processed_input)[0]
-    
-    # Get feature importances
+    # --- 返回失敗機率 ---
+    if hasattr(model_pipeline.named_steps['classifier'], "predict_proba"):
+        prob = model_pipeline.predict_proba(processed_input)[0, 1]  # class 1 的機率
+    else:
+        # fallback to hard prediction
+        prob = float(model_pipeline.predict(processed_input)[0])
+
+    # feature importances
     try:
         importances = model_pipeline.named_steps['classifier'].feature_importances_
-        feature_names = trained_columns
-        feature_importances = dict(zip(feature_names, importances))
+        feature_importances = dict(zip(trained_columns, importances))
     except Exception:
-        feature_importances = {} # In case of pipeline structure change
+        feature_importances = {}
 
-    return prediction, feature_importances
+    return prob, feature_importances
 
 
 if __name__ == '__main__':
