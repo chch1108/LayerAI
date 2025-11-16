@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 import zipfile
-from io import BytesIO
+import os
 from model_train import load_model_and_predict, INPUT_FEATURES
 from llm_recommender import get_llm_recommendation
 
@@ -14,16 +14,18 @@ uploaded_file = st.file_uploader("請上傳列印圖檔 ZIP (.zip)", type=['zip'
 if uploaded_file:
     try:
         with zipfile.ZipFile(uploaded_file) as zf:
-            # 取所有 PNG
-            png_files = [name for name in zf.namelist() if name.endswith(".png")]
+            # 取出所有 PNG 檔（忽略大小寫），只取檔名
+            png_files = [os.path.basename(name) for name in zf.namelist() if name.lower().endswith(".png")]
+            # 去除重複檔名
+            png_files = list(dict.fromkeys(png_files))
+
             if not png_files:
                 st.error("ZIP 內沒有 PNG 檔案")
             else:
                 st.success(f"找到 {len(png_files)} 張圖片")
                 layer_choice = st.selectbox("選擇要檢測的圖層", png_files)
-                
-                # 模擬讀取圖檔對應的特徵數據 (實際可用圖像處理或 metadata)
-                # 這裡先用虛擬數值示範
+
+                # 模擬讀取圖檔對應特徵數據
                 input_data = {
                     '材料黏度 (cps)': 1000,
                     '抬升高度(μm)': 50,
@@ -40,7 +42,7 @@ if uploaded_file:
 
                 try:
                     prediction, importances = load_model_and_predict(input_df)
-                    
+
                     if prediction == 0:
                         st.success("✅ **預測成功：樹脂回流完全**")
                         st.write("目前的參數設定安全，可以繼續列印。")
