@@ -116,13 +116,23 @@ def llm_layer_feedback(layer_info):
 
     # 呼叫 Gemini
     try:
+        # ---------------- debug start ----------------
+        print(f"[DEBUG] 開始生成 Layer {layer} 建議...")
+        # ---------------- debug end ----------------
+    
         reply = model.generate_content(prompt)
+    
+        # ---------------- debug start ----------------
+        print(f"[DEBUG] Layer {layer} 已收到回覆")
+        # ---------------- debug end ----------------
+    
         text = _extract_text_safe(reply)
-
+    
         if not text or text.strip() == "":
             return "(LLM 回覆為空，請稍後再試)"
-
+    
         return text
-
+    
     except Exception as e:
         return f"(LLM Error: {e})"
+
