@@ -1,3 +1,12 @@
+"""
+Module: llm_recommender.py
+功能: 針對高風險層生成 3D 列印回流建議或結論。
+保證：
+- 一定有 API Key（無就提示）
+- 一定有輸出文字（避免空白）
+- 兼容 Streamlit Cloud / Local
+"""
+
 import os
 import google.generativeai as genai
 
@@ -38,41 +47,40 @@ def _extract_text_safe(reply):
         return "(LLM 無回覆內容)"
 
 # -------------------------------
-# 4. 主函式：整體 summary
+# 4. 主函式：針對高風險層生成建議
 # -------------------------------
-def llm_summary_feedback(stats_summary, summary_prompt=None):
+def llm_highrisk_feedback(stats_summary, threshold=0.5):
     """
-    stats_summary: dict, 包含統計資訊，例如：
+    針對高風險層生成 LLM 建議，若沒有高風險層則回傳簡單結論。
+    stats_summary: dict, 包含統計資訊
         {
-            "total_layers": 100,
-            "high_risk_layers": 5,
-            "avg_prob": 0.23,
-            "max_prob": 0.72
+            "total_layers": int,
+            "high_risk_layers": int,
+            "avg_prob": float,
+            "max_prob": float
         }
-    summary_prompt: str, 可自訂 summary prompt
     """
     if model is None:
         return "(LLM 初始化失敗：請確認 GOOGLE_API_KEY)"
 
-    if summary_prompt is None:
-        # 預設 summary prompt
-        summary_prompt = f"""
-你是一位具有豐富光固化 3D 列印（DLP / LCD / CLIP）經驗的製程工程師。
-請根據下列統計資訊，提供「繁體中文」的整體建議或結論，重點放在可能的高風險層與優化方向：
+    high_risk_layers = stats_summary.get("high_risk_layers", 0)
 
-【統計資訊】
-- 總層數：{stats_summary.get('total_layers', 0)}
-- 高風險層數（prob >= 0.5）：{stats_summary.get('high_risk_layers', 0)}
-- 平均失敗機率：{stats_summary.get('avg_prob', 0):.3f}
-- 最高失敗機率：{stats_summary.get('max_prob', 0):.3f}
+    if high_risk_layers == 0:
+        # 全部低風險
+        return "所有層回流正常，結構穩定，無需額外調整。"
 
-請給出具體建議或結論，文字需至少 3~5 行。
+    # 高風險層存在，生成建議
+    prompt = f"""
+你是一位具有豐富光固化 3D 列印經驗的製程工程師。
+目前系統共 {stats_summary.get('total_layers', 0)} 層，其中高風險層數 {high_risk_layers}。
+平均失敗機率 {stats_summary.get('avg_prob', 0):.3f}，最高失敗機率 {stats_summary.get('max_prob', 0):.3f}。
+
+請提供「繁體中文」的具體建議，重點放在高風險層的優化方向，至少 3~5 行。
 """
 
-    # 呼叫 Gemini
     try:
-        print("[DEBUG] 開始呼叫 LLM 生成整體 summary...")
-        reply = model.generate_content(summary_prompt)
+        print("[DEBUG] 開始呼叫 LLM 生成高風險建議...")
+        reply = model.generate_content(prompt)
         print("[DEBUG] LLM 回覆已返回")
         text = _extract_text_safe(reply)
         if not text or text.strip() == "":
