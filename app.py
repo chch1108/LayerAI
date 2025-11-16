@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import zipfile
 import os
+import tempfile
 from model_train import load_model_and_predict, INPUT_FEATURES
 from llm_recommender import get_llm_recommendation
 
@@ -10,28 +11,40 @@ st.title("⚙️ 3D 列印回流檢測與 AI 優化建議")
 
 uploaded_file = st.file_uploader("請上傳列印圖檔 ZIP (.zip)", type=['zip'])
 
+def extract_images_from_zip(zip_path, extract_dir):
+    """解壓 ZIP 並取得 PNG 圖片路徑"""
+    imgs = []
+    filenames = []
+    with zipfile.ZipFile(zip_path) as zf:
+        for name in zf.namelist():
+            if name.lower().endswith(".png"):
+                # 保留原始名稱，避免重複時加上 _1, _2
+                base = os.path.basename(name)
+                if base in filenames:
+                    continue  # 已存在則跳過
+                zf.extract(name, path=extract_dir)
+                imgs.append(os.path.join(extract_dir, name))
+                filenames.append(base)
+    return imgs, filenames
+
 if uploaded_file:
     try:
-        with zipfile.ZipFile(uploaded_file) as zf:
-            # 建立 dict，key=basename, value=完整路徑（保留第一個出現）
-            png_dict = {}
-            for name in zf.namelist():
-                if name.lower().endswith(".png"):
-                    base = os.path.basename(name)
-                    if base not in png_dict:
-                        png_dict[base] = name
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = os.path.join(tmpdir, "slices.zip")
+            with open(zip_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
 
-            if not png_dict:
-                st.error("ZIP 內沒有 PNG 檔案")
+            st.info("解壓並讀取切片中...")
+            imgs, filenames = extract_images_from_zip(zip_path, tmpdir)
+            if not imgs:
+                st.error("ZIP 內沒有 PNG 圖片")
             else:
-                st.success(f"找到 {len(png_dict)} 張圖片")
-                # 選擇時顯示 basename
-                layer_choice_base = st.selectbox("選擇要檢測的圖層", list(png_dict.keys()))
-                # 實際使用完整路徑
-                layer_choice_full = png_dict[layer_choice_base]
+                st.success(f"讀取 {len(imgs)} 張切片")
+                # 選擇圖層
+                layer_choice_base = st.selectbox("選擇要檢測的圖層", filenames)
+                layer_choice_full = imgs[filenames.index(layer_choice_base)]
 
-                # --- 模擬讀取圖檔對應的特徵數據 ---
-                # 實際可替換成圖像分析或 metadata
+                # --- 模擬讀取圖檔對應特徵 ---
                 input_data = {
                     '材料黏度 (cps)': 1000,
                     '抬升高度(μm)': 50,
