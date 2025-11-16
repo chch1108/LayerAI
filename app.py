@@ -114,8 +114,8 @@ if uploaded and run_btn:
             "max_prob": results_df['prob'].max()
         }
 
-llm_text = llm_highrisk_feedback(stats_summary)
-st.markdown(llm_text)
+        llm_text = llm_highrisk_feedback(stats_summary)
+        st.markdown(llm_text)
 
         # -------------------------------
         # 簡單效益分析
