@@ -1,9 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
 import os
-
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
 import tempfile, io, zipfile
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -15,9 +11,8 @@ from image_processor import (
     suggest_parameters_for_layers_with_model,
     estimate_time_and_effects
 )
-
 from image_editor_level1 import overlay_issue_markers
-from llm_recommender import llm_summary_feedback
+from llm_recommender import llm_highrisk_feedback
 
 MODEL_PATH = "model.h5"
 
@@ -27,11 +22,12 @@ st.title("LayerAI — 多層逐層預測、Auto-Tune、修正版切片與效益�
 st.markdown("""
 上傳包含切片的 ZIP（每層 png/jpg）。  
 系統會依序完成：
+
 1. 逐層回流風險預測  
 2. Heatmap + 風險曲線  
 3. Auto-Tune（高風險層最佳參數）  
 4. Level 1 修正版切片（畫框標記風險）  
-5. 整體 LLM 建議（所有層總結）  
+5. 高風險層 LLM 建議（或全部低風險簡單結論）  
 6. 成效儀表板：時間節省與成功率提升
 """)
 
@@ -52,43 +48,38 @@ if uploaded and run_btn:
         with open(zip_path, "wb") as f:
             f.write(uploaded.getbuffer())
 
-        # ---------------- Step 1 ----------------
         st.info("解壓並讀取切片...")
-        print("Step 1: 解壓並讀取切片")
         imgs, filenames = extract_images_from_zip(zip_path, tmpdir)
         st.success(f"讀取 {len(imgs)} 張切片")
-        print(f"Step 1 完成～共 {len(imgs)} 張切片")
 
-        # ---------------- Step 2 ----------------
+        # Step 1：逐層預測
         st.info("逐層進行模型預測...")
-        print("Step 2: 逐層模型預測")
         results_df, model_meta = batch_predict_layers(imgs, filenames, model_path=MODEL_PATH)
         st.dataframe(results_df.head(50))
-        print(f"Step 2 完成～results_df rows: {len(results_df)}")
-
-        # ---------------- Step 3 ----------------
-        st.info("生成 heatmap 與風險曲線...")
-        print("Step 3: heatmap & curve")
         risks = results_df["prob"].values
+
+        # Step 2：Heatmap & 曲線
+        st.info("生成 heatmap 與風險曲線...")
         heatmap_fig, curve_fig = make_plotly_heatmap_and_curve(risks)
         st.plotly_chart(heatmap_fig, use_container_width=True)
         st.plotly_chart(curve_fig, use_container_width=True)
-        print("Step 3 完成")
 
-        # ---------------- Step 4 ----------------
+        # Step 3：Auto-Tune（高風險層）
         st.info("執行 Auto-Tune（為高風險層生成最佳參數）...")
-        print("Step 4: Auto-Tune")
         suggestion_df = suggest_parameters_for_layers_with_model(results_df, threshold=threshold, model_path=MODEL_PATH)
         st.subheader("建議參數（Auto-Tune 結果）")
         st.dataframe(suggestion_df)
-        print("Step 4 完成～suggestion_df rows:", len(suggestion_df))
+        st.download_button(
+            "下載建議參數 CSV",
+            data=suggestion_df.to_csv(index=False).encode("utf-8"),
+            file_name="layer_suggestions.csv",
+            mime="text/csv"
+        )
 
-        # ---------------- Step 4b: Level 1 Overlay ----------------
+        # Step 4：Level 1 修正（Overlay）
         st.info("生成 Level 1 修正版切片（畫框版）...")
-        print("Step 4b: Level 1 Overlay")
         modified_images = []
         modified_filenames = []
-
         for img, fname, prob in zip(imgs, filenames, risks):
             mod_img = overlay_issue_markers(img, prob)
             modified_images.append(mod_img)
@@ -98,49 +89,28 @@ if uploaded and run_btn:
         for fname, mod_img, prob in zip(modified_filenames, modified_images, risks):
             st.image(mod_img, caption=f"{fname} — 風險 {prob:.2f}", use_column_width=True)
 
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "w") as z:
-            for fname, img in zip(modified_filenames, modified_images):
-                img_bytes = io.BytesIO()
-                img.save(img_bytes, format="PNG")
-                z.writestr(fname, img_bytes.getvalue())
-
-        st.download_button(
-            "⬇️ 下載修正版切片 ZIP",
-            data=zip_buf.getvalue(),
-            file_name="modified_slices.zip",
-            mime="application/zip",
-        )
-        print("Step 4b 完成～Overlay ZIP 已生成")
-
-        # Step 5：LLM 整體建議
-        st.info("產生整體 LLM 建議（所有層總結）...")
-        
-        # 計算統計數據
+        # Step 5：高風險層 LLM 建議
+        st.info("產生高風險層 LLM 建議（或全部低風險簡單結論）...")
         total_layers = len(results_df)
         high_risk_layers = sum(results_df["prob"] >= threshold)
         avg_prob = results_df["prob"].mean()
         max_prob = results_df["prob"].max()
-        
+
         stats_summary = {
             "total_layers": total_layers,
             "high_risk_layers": high_risk_layers,
             "avg_prob": avg_prob,
             "max_prob": max_prob
         }
-        
-        prompt_summary = None  # 可自訂 prompt，也可以用預設
-        
-        with st.spinner("LLM 正在生成整體建議，請稍候..."):
-            summary_txt = llm_summary_feedback(stats_summary, summary_prompt=prompt_summary)
-        
+
+        with st.spinner("LLM 正在生成建議，請稍候..."):
+            summary_txt = llm_highrisk_feedback(stats_summary, threshold=threshold)
+
         st.subheader("整體建議 / 結論")
         st.markdown(summary_txt)
 
-
-        # ---------------- Step 6 ----------------
+        # Step 6：效益儀表板
         st.info("計算時間節省與成功率改善預估...")
-        print("Step 6: 成效儀表板")
         time_report_df = estimate_time_and_effects(results_df, suggestion_df)
         st.subheader("時間與成功率改善預估")
         st.dataframe(time_report_df)
@@ -150,5 +120,5 @@ if uploaded and run_btn:
             file_name="time_effects_report.csv",
             mime="text/csv"
         )
+
         st.success("分析完成！")
-        print("Step 6 完成～全流程結束")
