@@ -103,17 +103,19 @@ if uploaded and run_btn:
         # -------------------------------
         # LLM 高風險層整體建議
         # -------------------------------
-        st.info("產生 LLM 高風險層建議...")
+        st.info("產生 LLM 建議（高風險層總結）...")
+
+        st.subheader("LLM 高風險層建議 / 結論")
+        
         stats_summary = {
             "total_layers": len(results_df),
-            "high_risk_layers": len(results_df[results_df['prob'] >= threshold]),
+            "high_risk_layers": (results_df['prob'] >= threshold).sum(),
             "avg_prob": results_df['prob'].mean(),
             "max_prob": results_df['prob'].max()
         }
 
-        llm_text = llm_highrisk_feedback(stats_summary, threshold=threshold)
-        st.subheader("LLM 高風險層建議 / 結論")
-        st.markdown(llm_text)
+llm_text = llm_highrisk_feedback(stats_summary)
+st.markdown(llm_text)
 
         # -------------------------------
         # 簡單效益分析
