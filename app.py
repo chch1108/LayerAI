@@ -130,8 +130,8 @@ if uploaded and run_btn:
         # Step 5：LLM 建議（所有層都輸出）
         # ---------------------------------------------
         st.info("產生 LLM 建議（所有層）...")
-
         st.subheader("LLM 層級建議 / 結論")
+        
         for _, row in results_df.iterrows():
             layer_info = {
                 "layer": row["layer"],
@@ -140,32 +140,31 @@ if uploaded and run_btn:
                 "suggested_params": None,
                 "suggested_prob": None
             }
-
+        
             # 如果 Auto-Tune 有該層
             match = suggestion_df[suggestion_df["layer"] == row["layer"]]
-
+        
             if len(match) > 0:
                 m = match.iloc[0]
-            
-                # 若欄位存在才放入（避免 KeyError）
+        
                 params = {}
                 for key in ["wait_time", "lift_height", "lift_speed"]:
                     if key in m:
                         params[key] = m[key]
-            
-                # 若找到至少一個參數就存
+        
                 layer_info["suggested_params"] = params if len(params) > 0 else None
-            
-                # 建議後預測機率
                 layer_info["suggested_prob"] = m["suggested_prob"] if "suggested_prob" in m else None
-            
-            else:
-                # 沒有 Auto-Tune（低風險層）
-                layer_info["suggested_params"] = None
-                layer_info["suggested_prob"] = None
-
-
-            txt = llm_layer_feedback(layer_info)
+        
+            # 確保整個 LLM 迴圈不會阻塞
+            try:
+                txt = llm_layer_feedback(layer_info)
+            except Exception as e:
+                txt = f"(LLM 出錯: {e})"
+        
+            # 如果仍為空，給預設文字
+            if not txt or txt.strip() == "":
+                txt = "(LLM 未回覆任何內容，請確認 API Key 與模型可用)"
+        
             st.markdown(f"### Layer {int(row['layer'])}\n{txt}")
 
         # ---------------------------------------------
