@@ -1,109 +1,80 @@
 import streamlit as st
+import tempfile, os, io, zipfile
 import pandas as pd
-import os
-from PIL import Image
-import google.generativeai as genai
-
-# --- 從 Streamlit Secrets 或環境變數讀取 API Key ---
-genai_api_key = st.secrets.get("GENAI_API_KEY") or os.getenv("GENAI_API_KEY")
-if not genai_api_key:
-    st.error("GenAI API Key 未設定！請在 Streamlit Secrets 或環境變數中設定。")
-else:
-    genai.configure(api_key=genai_api_key)
-
-# Import 模組
-from image_processor import extract_geometric_features
-from model_train import load_model_and_predict, INPUT_FEATURES, CATEGORICAL_FEATURES
-from llm_recommender import get_llm_recommendation
-
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="AI 決策支持系統 (DLP 3D列印)",
-    page_icon="🤖",
-    layout="wide"
+from image_processor import (
+    extract_images_from_zip,
+    batch_predict_layers,
+    make_plotly_heatmap_and_curve,
+    suggest_parameters_for_layers_with_model,
+    generate_modified_slices_zip,
+    estimate_time_and_effects
 )
+from llm_recommender import llm_textual_suggestions
 
-# --- Application State ---
-if 'history' not in st.session_state:
-    st.session_state.history = []
+# CONFIG: 指向模型檔（若無則留空使用 mock）
+MODEL_PATH = "model.h5"
 
-# --- UI Layout ---
-st.title("🤖 AI 決策支持系統：DLP 樹脂回流預測")
-st.write("根據您輸入的 **單層圖像** 與 **製程參數**，本系統將預測樹脂回流是否完全。若預測失敗，將由 AI 提供優化建議。")
+st.set_page_config(layout="wide", page_title="LayerAI - Multi-layer Suite")
+st.title("LayerAI — 多層逐層預測、Auto-Tune、修正版切片與效益儀表板")
 
-col1, col2 = st.columns(2)
+st.markdown("""
+上傳包含切片的 ZIP（每層 png/jpg）。系統會逐層預測回流失敗風險、畫出 heatmap 與風險曲線、為高風險層自動測試候選參數找出最佳組合，並產出修正版切片供下載，最後顯示時間/成功率改善預估。
+""")
 
-# --- Column 1: User Inputs ---
+col1, col2 = st.columns([1,2])
 with col1:
-    st.header("1. 輸入參數")
-    uploaded_file = st.file_uploader(
-        "上傳單層切片圖像 (Upload Layer Image)", 
-        type=['png', 'jpg', 'jpeg', 'bmp']
-    )
-    st.subheader("製程參數 (Process Parameters)")
-    p_col1, p_col2 = st.columns(2)
-    with p_col1:
-        viscosity = p_col1.number_input("材料黏度 (cps)", min_value=50, max_value=1000, value=150, step=10)
-        lift_height = p_col1.number_input("抬升高度 (μm)", min_value=500, max_value=8000, value=1500, step=100)
-        lift_speed = p_col1.number_input("抬升速度 (μm/s)", min_value=100, max_value=8000, value=700, step=50)
-    with p_col2:
-        wait_time = p_col2.number_input("等待時間 (s)", min_value=0.0, max_value=5.0, value=0.5, step=0.1)
-        down_speed = p_col2.number_input("下降速度 (μm/s)", min_value=1000, max_value=10000, value=4000, step=500)
-        shape = p_col2.selectbox("形狀 (Shape)", options=['90x45矩形', '90x50六角形', '50圓柱'])
-    predict_button = st.button("執行預測 (Run Prediction)", type="primary")
+    uploaded = st.file_uploader("上傳切片 ZIP 檔 (每張為一層)", type=["zip"])
+    threshold = st.slider("高風險判定閾值（failure probability）", min_value=0.0, max_value=1.0, value=0.5, step=0.01)
+    st.write("Model 檔路徑（若要使用真實模型，請先上傳 model.h5 至 repo 或改此設定）")
+    st.text(MODEL_PATH if MODEL_PATH else "使用模擬模型 (mock)")
 
-# --- Column 2: Prediction and Recommendation ---
+    run_btn = st.button("開始分析（逐層預測 + Auto-Tune）")
+
 with col2:
-    st.header("2. 預測結果與建議")
-    if predict_button:
-        if uploaded_file is None:
-            st.error("請先上傳圖像文件。")
-        else:
-            with st.spinner("處理中... 正在分析圖像並執行預測..."):
-                temp_image_path = f"temp_{uploaded_file.name}"
-                with open(temp_image_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                geo_features = extract_geometric_features(temp_image_path)
-                os.remove(temp_image_path)
+    st.empty()
 
-                if geo_features is None:
-                    st.error("圖像處理失敗，請檢查圖像文件是否有效。")
-                else:
-                    st.info(f"圖像特徵提取成功：\n" 
-                            f"- 面積: {geo_features['area']:.2f} mm²\n" 
-                            f"- 周長: {geo_features['perimeter']:.2f} mm\n" 
-                            f"- 水力直徑: {geo_features['hydraulic_diameter']:.2f} mm")
-                    
-                    # --- Prepare Data for Model ---
-                    input_data = {
-                        '材料黏度 (cps)': viscosity,
-                        '抬升高度(μm)': lift_height,
-                        '抬升速度(μm/s)': lift_speed,
-                        '等待時間(s)': wait_time,
-                        '下降速度((μm)/s)': down_speed,
-                        '形狀': shape,
-                        '面積(mm?)': geo_features['area'],
-                        '周長(mm)': geo_features['perimeter'],
-                        '水力直徑(mm)': geo_features['hydraulic_diameter']
-                    }
-                    final_input_data = {feat: input_data.get(feat) for feat in INPUT_FEATURES}
-                    input_df = pd.DataFrame([final_input_data])
+if uploaded and run_btn:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, "slices.zip")
+        with open(zip_path, "wb") as f:
+            f.write(uploaded.getbuffer())
 
-                    # --- Run Prediction ---
-                    try:
-                        prediction, importances = load_model_and_predict(input_df)
-                        if prediction == 0:
-                            st.success("✅ **預測成功：樹脂回流完全**")
-                            st.write("目前的參數設定在此層是安全的，可以繼續列印。")
-                        else:
-                            st.error("🚨 **預測失敗：樹脂回流不完全**")
-                            st.write("偵測到潛在的列印失敗風險。正在向 AI 尋求優化建議...")
-                            with st.spinner("正在生成 AI 建議..."):
-                                recommendation = get_llm_recommendation(final_input_data, importances)
-                                st.markdown("---")
-                                st.subheader("🤖 AI 優化建議")
-                                st.markdown(recommendation)
-                    except FileNotFoundError as e:
-                        st.error(f"模型文件遺失：{e}\n請先執行 `python model_train.py` 訓練模型。")
-                    except Exception as e:
-                        st.error(f"預測時發生錯誤：{e}")
+        st.info("解壓並讀取切片...")
+        imgs, filenames = extract_images_from_zip(zip_path, tmpdir)
+        st.success(f"讀取 {len(imgs)} 張切片")
+
+        st.info("逐層進行模型預測...")
+        results_df, model_meta = batch_predict_layers(imgs, filenames, model_path=MODEL_PATH)
+        st.dataframe(results_df.head(50))
+
+        st.info("生成 heatmap 與風險曲線...")
+        heatmap_fig, curve_fig = make_plotly_heatmap_and_curve(results_df['prob'].values)
+        st.plotly_chart(heatmap_fig, use_container_width=True)
+        st.plotly_chart(curve_fig, use_container_width=True)
+
+        st.info("執行 Auto-Tune（為高風險層生成建議參數）...")
+        suggestion_df = suggest_parameters_for_layers_with_model(results_df, threshold=threshold, model_path=MODEL_PATH)
+        st.subheader("建議參數（Auto-Tune 結果）")
+        st.dataframe(suggestion_df)
+
+        csv_bytes = suggestion_df.to_csv(index=False).encode('utf-8')
+        st.download_button("下載建議參數 CSV", data=csv_bytes, file_name="layer_suggestions.csv", mime="text/csv")
+
+        st.info("為高風險層生成修正版切片（侵蝕 / 加支撐示範）...")
+        modified_zip_bytes = generate_modified_slices_zip(imgs, filenames, results_df, threshold=threshold)
+        st.download_button("下載修正版切片 ZIP", data=modified_zip_bytes, file_name="modified_slices.zip", mime="application/zip")
+
+        st.info("產生文字建議（LLM）— 取 top 3 高風險層的解釋")
+        top3 = suggestion_df.sort_values('orig_prob', ascending=False).head(3)
+        for _, row in top3.iterrows():
+            txt = llm_textual_suggestions(row)
+            st.markdown(f"**Layer {int(row['layer'])}**: {txt}")
+
+        st.info("計算時間節省與成功率改善預估...")
+        time_report_df = estimate_time_and_effects(results_df, suggestion_df)
+        st.subheader("時間與成功率改善預估")
+        st.dataframe(time_report_df)
+        st.download_button("下載時間效益報告 CSV", data=time_report_df.to_csv(index=False).encode('utf-8'),
+                           file_name="time_effects_report.csv", mime="text/csv")
+
+        st.success("完成。請檢查結果並下載需要的報表或修正版切片。")
