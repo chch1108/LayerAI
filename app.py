@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import zipfile
@@ -14,18 +13,25 @@ uploaded_file = st.file_uploader("請上傳列印圖檔 ZIP (.zip)", type=['zip'
 if uploaded_file:
     try:
         with zipfile.ZipFile(uploaded_file) as zf:
-            # 取出所有 PNG 檔（忽略大小寫），只取檔名
-            png_files = [os.path.basename(name) for name in zf.namelist() if name.lower().endswith(".png")]
-            # 去除重複檔名
-            png_files = list(dict.fromkeys(png_files))
+            # 建立 dict，key=basename, value=完整路徑（保留第一個出現）
+            png_dict = {}
+            for name in zf.namelist():
+                if name.lower().endswith(".png"):
+                    base = os.path.basename(name)
+                    if base not in png_dict:
+                        png_dict[base] = name
 
-            if not png_files:
+            if not png_dict:
                 st.error("ZIP 內沒有 PNG 檔案")
             else:
-                st.success(f"找到 {len(png_files)} 張圖片")
-                layer_choice = st.selectbox("選擇要檢測的圖層", png_files)
+                st.success(f"找到 {len(png_dict)} 張圖片")
+                # 選擇時顯示 basename
+                layer_choice_base = st.selectbox("選擇要檢測的圖層", list(png_dict.keys()))
+                # 實際使用完整路徑
+                layer_choice_full = png_dict[layer_choice_base]
 
-                # 模擬讀取圖檔對應特徵數據
+                # --- 模擬讀取圖檔對應的特徵數據 ---
+                # 實際可替換成圖像分析或 metadata
                 input_data = {
                     '材料黏度 (cps)': 1000,
                     '抬升高度(μm)': 50,
@@ -40,9 +46,10 @@ if uploaded_file:
                 final_input_data = {feat: input_data.get(feat) for feat in INPUT_FEATURES}
                 input_df = pd.DataFrame([final_input_data])
 
+                # --- Run Prediction ---
                 try:
                     prediction, importances = load_model_and_predict(input_df)
-
+                    
                     if prediction == 0:
                         st.success("✅ **預測成功：樹脂回流完全**")
                         st.write("目前的參數設定安全，可以繼續列印。")
