@@ -38,74 +38,42 @@ def _extract_text_safe(reply):
         return "(LLM 無回覆內容)"
 
 # -------------------------------
-# 4. 主函式：輸出建議（單層或整體）
+# 4. 主函式：整體 summary
 # -------------------------------
-def llm_layer_feedback(layer_info, summary_prompt=None):
+def llm_summary_feedback(stats_summary, summary_prompt=None):
     """
-    若 summary_prompt 有提供 → 用整體 summary 結論
-    否則 → 傳統逐層建議
+    stats_summary: dict, 包含統計資訊，例如：
+        {
+            "total_layers": 100,
+            "high_risk_layers": 5,
+            "avg_prob": 0.23,
+            "max_prob": 0.72
+        }
+    summary_prompt: str, 可自訂 summary prompt
     """
     if model is None:
         return "(LLM 初始化失敗：請確認 GOOGLE_API_KEY)"
 
-    # 1. summary 模式
-    if summary_prompt:
-        prompt = summary_prompt
-        print("[DEBUG] 使用整體 summary prompt 呼叫 LLM")
-    else:
-        # 單層模式
-        layer = layer_info.get("layer")
-        filename = layer_info.get("filename", "N/A")
-        prob = float(layer_info.get("orig_prob", 0.0))
-        sug_params = layer_info.get("suggested_params")
-        sug_prob = layer_info.get("suggested_prob")
-
-        # 風險分級
-        if prob >= 0.50:
-            risk_desc = "高風險（樹脂回流可能顯著不足）"
-        elif prob >= 0.20:
-            risk_desc = "中度風險（可能需要微量調整）"
-        else:
-            risk_desc = "低風險（回流正常）"
-
-        prompt = f"""
+    if summary_prompt is None:
+        # 預設 summary prompt
+        summary_prompt = f"""
 你是一位具有豐富光固化 3D 列印（DLP / LCD / CLIP）經驗的製程工程師。
-請根據下列資訊提供「繁體中文」的建議或結論（每層必須有內容）。
+請根據下列統計資訊，提供「繁體中文」的整體建議或結論，重點放在可能的高風險層與優化方向：
 
-【層資訊】
-- 層號：{layer}
-- 圖片：{filename}
+【統計資訊】
+- 總層數：{stats_summary.get('total_layers', 0)}
+- 高風險層數（prob >= 0.5）：{stats_summary.get('high_risk_layers', 0)}
+- 平均失敗機率：{stats_summary.get('avg_prob', 0):.3f}
+- 最高失敗機率：{stats_summary.get('max_prob', 0):.3f}
 
-【模型預測】
-- 原始失敗機率：{prob:.3f}
-- 風險分類：{risk_desc}
-"""
-        if sug_params:
-            prompt += f"""
-【AI Auto-Tune 建議】
-- wait_time：{sug_params.get('wait_time')}
-- lift_height：{sug_params.get('lift_height')}
-- lift_speed：{sug_params.get('lift_speed')}
-- Auto-Tune 後預期失敗機率：{sug_prob:.3f}
-
-請依據風險分類給出以下形式的回答：
-1. 若高風險：提供 2~3 個具體調整建議與原因
-2. 若中風險：給出微調方向與可能改善幅度
-3. 若低風險：給出「結論」＋「是否需要細微優化」
-"""
-        else:
-            prompt += """
-此層無 Auto-Tune 參數建議（通常為低風險）。
-請提供適合的結論，例如：
-- 回流狀況正常、結構穩定
-- 是否仍可透過減少等待時間或微幅調整提升效率
+請給出具體建議或結論，文字需至少 3~5 行。
 """
 
     # 呼叫 Gemini
     try:
-        print("[DEBUG] 開始呼叫 LLM 生成建議...")
-        reply = model.generate_content(prompt)
-        print("[DEBUG] 已收到 LLM 回覆")
+        print("[DEBUG] 開始呼叫 LLM 生成整體 summary...")
+        reply = model.generate_content(summary_prompt)
+        print("[DEBUG] LLM 回覆已返回")
         text = _extract_text_safe(reply)
         if not text or text.strip() == "":
             return "(LLM 回覆為空，請稍後再試)"
