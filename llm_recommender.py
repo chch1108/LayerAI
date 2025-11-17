@@ -1,146 +1,65 @@
 """
 Module: llm_recommender.py
-功能: 針對每一層（不論風險高低）產生 3D 列印回流建議或結論。
-保證：
-- 一定有 API Key（無就提示）
-- 一定有輸出文字（避免空白）
-- 兼容 Streamlit Cloud / Local
+功能：用 Gemini 產生逐層建議（只在高風險時使用）
 """
 
 import os
 import google.generativeai as genai
+from typing import Dict, Any
 
-# -------------------------------
-# 1. API KEY 配置
-# -------------------------------
-API_KEY = os.getenv("GENAI_API_KEY")
-
-if API_KEY is None:
-    print("[WARNING] GOOGLE_API_KEY 未設定，LLM 將無法正常運作。請至環境變數或 Streamlit Secrets 設定。")
-else:
+API_KEY = os.getenv("GENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+if API_KEY:
     genai.configure(api_key=API_KEY)
+else:
+    print("[WARNING] 找不到 GENAI_API_KEY，LLM 建議功能將無法使用。")
 
-# -------------------------------
-# 2. 初始化 Gemini 模型
-# -------------------------------
-MODEL_NAME = "gemini-2.5-flash"
-
-try:
-    model = genai.GenerativeModel(MODEL_NAME)
-except Exception as e:
-    print(f"[ERROR] 初始化 Gemini 模型失敗：{e}")
-    model = None
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 
-# -------------------------------
-# 3. 安全提取 Gemini 文本
-# -------------------------------
-def _extract_text_safe(reply):
+def get_llm_recommendation(input_params: Dict[str, Any], feature_importances: Dict[str, float]) -> str:
     """
-    若正常文本不存在，嘗試 fallback，保證一定回傳文字。
+    給單層產生建議（高風險才使用）
     """
     try:
-        # 情況 1：標準 text
-        if hasattr(reply, "text") and reply.text:
-            return reply.text
+        sorted_imp = sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)
 
-        # 情況 2：Deep fallback
-        if reply.candidates:
-            cand = reply.candidates[0]
-            if cand.content.parts:
-                part = cand.content.parts[0]
-                if hasattr(part, "text"):
-                    return part.text
+        params_str = "\n".join([f"- {k}: {v}" for k, v in input_params.items()])
+        importances_str = "\n".join([f"- {feat}: {imp:.3f}" for feat, imp in sorted_imp[:5]])
 
-    except Exception:
-        pass
+        prompt = f"""
+你是一名 DLP 光固化 3D 列印製程工程師。
+此層被預測為「樹脂回流不完全」。
 
-    return "(LLM 無回覆內容)"
+請根據列印參數與關鍵影響因素，提供 2 項可執行優化建議。
 
+【列印參數】
+{params_str}
 
-# -------------------------------
-# 4. 主函式：輸出層級建議
-# -------------------------------
-def llm_layer_feedback(layer_info):
-    """
-    為單一層生成建議。
+【影響因子（模型判斷）】
+{importances_str}
 
-    layer_info example：
-    {
-        "layer": 12,
-        "filename": "layer012.png",
-        "orig_prob": 0.83,
-        "suggested_params": {
-            "wait_time": 4.5,
-            "lift_height": 6.0,
-            "lift_speed": 2.0
-        },
-        "suggested_prob": 0.31
-    }
-    """
+請使用繁體中文回覆，格式為：
 
-    if model is None:
-        return "(LLM 初始化失敗：請確認 GOOGLE_API_KEY)"
+1. 建議項目：
+   - 目前數值：xxx
+   - 建議數值：yyy
+   - 原因：zzz
 
-    layer = layer_info.get("layer")
-    filename = layer_info.get("filename", "N/A")
-    prob = float(layer_info.get("orig_prob", 0.0))
-    sug_params = layer_info.get("suggested_params")
-    sug_prob = layer_info.get("suggested_prob")
-
-    # 風險分級
-    if prob >= 0.50:
-        risk_desc = "高風險（樹脂回流可能顯著不足）"
-    elif prob >= 0.20:
-        risk_desc = "中度風險（可能需要微量調整）"
-    else:
-        risk_desc = "低風險（回流正常）"
-
-    prompt = f"""
-你是一位具有豐富光固化 3D 列印（DLP / LCD / CLIP）經驗的製程工程師。
-請根據下列資訊提供「繁體中文」的建議或結論（每層必須有內容）。
-
-【層資訊】
-- 層號：{layer}
-- 圖片：{filename}
-
-【模型預測】
-- 原始失敗機率：{prob:.3f}
-- 風險分類：{risk_desc}
+2. 建議項目：
+   - 目前數值：xxx
+   - 建議數值：yyy
+   - 原因：zzz
 """
 
-    # 若 Auto-Tune 有給任何建議 → 一併加入
-    if sug_params:
-        prompt += f"""
-【AI Auto-Tune 建議】
-- wait_time：{sug_params.get('wait_time')}
-- lift_height：{sug_params.get('lift_height')}
-- lift_speed：{sug_params.get('lift_speed')}
-- Auto-Tune 後預期失敗機率：{sug_prob:.3f}
-
-請依據風險分類給出以下形式的回答：
-1. 若高風險：提供 2~3 個具體調整建議與原因
-2. 若中風險：給出微調方向與可能改善幅度
-3. 若低風險：給出「結論」＋「是否需要細微優化」
-"""
-
-    else:
-        prompt += """
-此層無 Auto-Tune 參數建議（通常為低風險）。
-請提供適合的結論，例如：
-- 回流狀況正常、結構穩定
-- 是否仍可透過減少等待時間或微幅調整提升效率
-"""
-
-    # 呼叫 Gemini
-    try:
         reply = model.generate_content(prompt)
-        text = _extract_text_safe(reply)
-
-        if not text or text.strip() == "":
-            return "(LLM 回覆為空，請稍後再試)"
-
-        return text
+        return reply.text or "(LLM 無回覆)"
 
     except Exception as e:
-        return f"(LLM Error: {e})"
+        return f"(LLM ERROR: {e})"
+
+
+def get_low_risk_message():
+    """
+    低風險層固定結論
+    """
+    return "✔ 此層回流狀況良好，模型判定無明顯風險。\n建議維持目前參數設定。"
