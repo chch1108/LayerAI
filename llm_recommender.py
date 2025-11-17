@@ -7,7 +7,7 @@ import os
 import google.generativeai as genai
 from typing import Dict, Any
 
-API_KEY = os.getenv("GENAI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+API_KEY = os.getenv("GENAI_API_KEY")
 if API_KEY:
     genai.configure(api_key=API_KEY)
 else:
