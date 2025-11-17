@@ -20,8 +20,7 @@ from image_processor import (
 )
 from model_train import load_model_and_predict
 from llm_recommender import get_llm_recommendation, get_low_risk_message
-from image_editor_level1 import overlay_issue_markers
-
+from image_editor_level1 import flow_simulation_overlay
 
 ############################################################
 # 0. Global UI Theme / CSS
@@ -75,7 +74,6 @@ lift_height = st.sidebar.number_input("抬升高度 (μm)", 500, 8000, 1500, 100
 lift_speed = st.sidebar.number_input("抬升速度 (μm/s)", 100, 8000, 700, 50)
 wait_time = st.sidebar.number_input("等待時間 (s)", 0.0, 5.0, 0.5, 0.1)
 down_speed = st.sidebar.number_input("下降速度 (μm/s)", 1000, 10000, 4000, 500)
-shape = st.sidebar.selectbox("形狀", ['90x45矩形', '90x50六角形', '50圓柱'])
 
 uploaded = st.sidebar.file_uploader("📁 上傳切片 ZIP", type=["zip"])
 threshold = st.sidebar.slider("高風險判定閾值", 0.0, 1.0, 0.5, 0.01)
@@ -125,11 +123,11 @@ if run_btn:
                         '抬升速度(μm/s)': lift_speed,
                         '等待時間(s)': wait_time,
                         '下降速度((μm)/s)': down_speed,
-                        '形狀': shape,
                         '面積(mm?)': feat['area'],
                         '周長(mm)': feat['perimeter'],
                         '水力直徑(mm)': feat['hydraulic_diameter'],
                     }
+
 
                     pred, importances = load_model_and_predict(pd.DataFrame([input_data]))
 
@@ -151,7 +149,7 @@ if run_btn:
 
                     # overlay for high risk
                     if float(pred) >= st.session_state.threshold:
-                        ov = overlay_issue_markers(img, float(pred))
+                        ov = flow_simulation_overlay(img)
                         buf = io.BytesIO()
                         ov.save(buf, format="PNG")
                         st.session_state.overlays.append((feat["layer"], buf.getvalue()))
