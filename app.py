@@ -244,51 +244,19 @@ if st.session_state.results_df is not None:
     csv_bytes = summary_df.to_csv(index=False).encode("utf-8")
     st.download_button("下載建議總表 CSV", data=csv_bytes, file_name="suggestions_summary.csv", mime="text/csv")
 
-    # ---------------- Export PDF report ----------------
-    st.subheader("匯出 PDF 報告（包含 overlay 圖與建議）")
-    pdf_name = "layerai_report.pdf"
-    if st.button("建立並下載 PDF 報告"):
-        # create PDF in tmpdir
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdf_path = os.path.join(tmpdir, pdf_name)
-            pdf = FPDF()
-            pdf.set_auto_page_break(auto=True, margin=15)
-
-            # Title page
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(0, 10, "LayerAI 逐層分析報告", ln=True, align="C")
-            pdf.ln(4)
-            pdf.set_font("Arial", size=12)
-            pdf.cell(0, 8, f"共 {len(df)} 層 — 生成閾值 {threshold}", ln=True)
-            pdf.ln(6)
-
-            # Add a table of top risk layers
-            topN = summary_df.head(10)
-            for _, r in topN.iterrows():
-                pdf.set_font("Arial", 'B', 12)
-                pdf.cell(0, 8, f"Layer {int(r['layer'])}  風險: {r['prob']}", ln=True)
-                pdf.set_font("Arial", size=11)
-                pdf.multi_cell(0, 6, f"Top3 features: {r['top3_features']}")
-                pdf.multi_cell(0, 6, f"Suggested params: {r['suggested_params']}")
-                pdf.multi_cell(0, 6, f"AI Suggestion: {r['ai_suggestion']}")
-                pdf.ln(2)
-
-                # embed overlay image if available
-                for (lay, img_bytes) in st.session_state.overlays:
-                    if int(lay) == int(r["layer"]):
-                        img_path = os.path.join(tmpdir, f"layer_{lay}.png")
-                        with open(img_path, "wb") as f:
-                            f.write(img_bytes)
-                        pdf.image(img_path, w=120)
-                        pdf.ln(4)
-                        break
-
-            pdf.output(pdf_path)
-
-            with open(pdf_path, "rb") as f:
-                pdf_data = f.read()
-
-            st.download_button("下載 PDF 報告", data=pdf_data, file_name=pdf_name, mime="application/pdf")
-
-# end
+    # ---------------- 顯示報告在頁面上 ----------------
+    st.subheader("📄 報告預覽（含 overlay 與 AI 建議）")
+    st.info("以下為逐層分析結果，直接顯示於頁面上，無需下載 PDF。")
+    
+    for _, r in summary_df.iterrows():
+        layer = int(r["layer"])
+        st.markdown(f"### Layer {layer} — 風險 {r['prob']:.3f}")
+        st.markdown(f"- **Top3 features:** {r['top3_features']}")
+        st.markdown(f"- **Suggested params:** {r['suggested_params']}")
+        st.markdown(f"- **AI Suggestion:** {r['ai_suggestion']}")
+    
+        # overlay 圖片
+        for (lay, img_bytes) in st.session_state.overlays:
+            if int(lay) == layer:
+                st.image(img_bytes, caption=f"Layer {layer} Overlay", use_column_width=True)
+                break
