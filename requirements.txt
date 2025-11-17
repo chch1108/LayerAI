@@ -30,3 +30,6 @@ plotly
 matplotlib
 
 tensorflow==2.12.0
+
+fpdf
+plotly
