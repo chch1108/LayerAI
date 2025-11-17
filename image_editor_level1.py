@@ -1,93 +1,46 @@
-import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import math
-import io
+import cv2
+from PIL import Image
 
-FONT = None
-
-def _load_font(size=16):
-    global FONT
-    try:
-        from PIL import ImageFont
-        FONT = ImageFont.truetype("DejaVuSans.ttf", size)
-    except Exception:
-        FONT = None
-
-def overlay_issue_markers(pil_img, risk_score=None):
+def flow_simulation_overlay(img: Image.Image, alpha=0.55):
     """
-    改良版 overlay：
-    - 只在有問題的局部區塊畫 box
-    - 判斷標準：大面積 (佔比), 長細比 (aspect ratio), 尖角 (approx poly vertices)
+    產生回流難易度 Heatmap Overlay（Pseudo Flow Simulation）
+    
+    img: PIL Image (grayscale)
+    alpha: overlay 透明度（0~1）
     """
-    if FONT is None:
-        _load_font(14)
 
-    img_cv = cv2.cvtColor(np.array(pil_img), cv2.COLOR_GRAY2BGR)
-    h, w = img_cv.shape[:2]
+    # convert to array
+    arr = np.array(img)
 
-    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+    # 二值化：假設白色為模型區域
+    # 若相反，可改成 THRESH_BINARY_INV
+    _, mask = cv2.threshold(arr, 0, 255, cv2.THRESH_OTSU)
 
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 去除噪音（很重要）
+    mask = cv2.medianBlur(mask, 5)
 
-    # compute image area
-    img_area = w * h
-    issues = []
+    # 計算距離變換（distance transform）
+    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
 
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 10:  # ignore tiny specks
-            continue
-        x, y, cw, ch = cv2.boundingRect(cnt)
-        # aspect ratio
-        ar = cw / (ch + 1e-6)
-        # polygon vertices
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-        verts = len(approx)
+    # normalize → [0,1]
+    dist_norm = cv2.normalize(dist, None, 0, 1.0, cv2.NORM_MINMAX)
 
-        reason = []
-        # large area threshold (relative)
-        if area / img_area > 0.02:  # >2% of image area
-            reason.append("大面積")
-        # narrow long piece
-        if ar > 3 or ar < 0.33:
-            reason.append("細長/高長寬比")
-        # many vertices -> complex/尖角
-        if verts >= 6:
-            reason.append("形狀複雜/尖角")
-        if len(reason) > 0:
-            issues.append((x, y, cw, ch, reason, area))
+    # 回流難易度 = 1 - dist_norm
+    # 越接近邊界 → dist 小 → risk 高
+    risk_map = 1.0 - dist_norm
 
-    # if no issues, and risk_score low: return small green badge instead
-    pil_out = Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
-    draw = ImageDraw.Draw(pil_out)
+    # 轉 0~255
+    heat = np.uint8(risk_map * 255)
 
-    if not issues:
-        # draw small corner badge
-        badge_text = f"Risk: {risk_score:.2f}" if risk_score is not None else "OK"
-        text_pos = (10, 10)
-        draw.rectangle([text_pos, (text_pos[0]+140, text_pos[1]+26)], fill=(15,160,90,200))
-        draw.text((text_pos[0]+6, text_pos[1]+4), badge_text, fill="white", font=FONT)
-        return pil_out
+    # 套上顏色圖（COLORMAP_JET 非常有 CFD 感）
+    heat_color = cv2.applyColorMap(heat, cv2.COLORMAP_JET)
 
-    # draw boxes and labels for each issue
-    for (x, y, cw, ch, reason, area) in issues:
-        # choose color based on severity (area percentage)
-        severity = min(1.0, (area / img_area) * 50)
-        # interpolate red->orange
-        color = (255, int(180*(1-severity)), 0)
-        # draw rectangle
-        draw.rectangle([x, y, x+cw, y+ch], outline=color, width=4)
-        # label
-        label = ",".join(reason)
-        # shrink label if too long
-        if len(label) > 30:
-            label = label[:27] + "..."
-        tx = x
-        ty = max(0, y-18)
-        draw.rectangle([tx, ty, tx+len(label)*7+8, ty+16], fill=(0,0,0,150))
-        draw.text((tx+4, ty+1), label, fill="white", font=FONT)
+    # 原始圖像轉成 BGR
+    base = cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
 
-    return pil_out
+    # 混合
+    blended = cv2.addWeighted(base, 1 - alpha, heat_color, alpha, 0)
+
+    # 轉回 PIL
+    return Image.fromarray(blended)
