@@ -10,6 +10,7 @@ streamlit
 
 # 影像處理（Cloud 版需使用 headless）
 opencv-python-headless
+scikit-image>=0.19.3
 
 # HTTP
 requests
