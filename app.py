@@ -1,27 +1,75 @@
+###############################################
+# LayerAI — Competition Edition (Final Version)
+###############################################
+
 import streamlit as st
-import tempfile, os, io, zipfile
+import tempfile
+import os
+import io
+import zipfile
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from fpdf import FPDF
 from PIL import Image
 
-# 你的模組（請確認檔案存在）
+# === Internal modules ===
 from image_processor import (
     extract_images_from_zip,
     batch_extract_features,
-    suggest_parameters_for_layers_with_model  # 若 image_processor 無此函式會拋錯，見下方 fallback
+    suggest_parameters_for_layers_with_model,
 )
 from model_train import load_model_and_predict
 from llm_recommender import get_llm_recommendation, get_low_risk_message
 from image_editor_level1 import overlay_issue_markers
 
-# ---------------- Streamlit page ----------------
-st.set_page_config(layout="wide", page_title="LayerAI — Competition Edition")
-st.title("LayerAI — 多層風險分析、Auto-Tune、Overlay、LLM 建議與報告輸出")
 
-# ---------------- Sidebar: process parameters ----------------
-st.sidebar.header("製程參數 (Process Parameters)")
+############################################################
+# 0. Global UI Theme / CSS
+############################################################
+st.set_page_config(layout="wide", page_title="LayerAI — Competition Edition")
+
+st.markdown("""
+<style>
+/* Page background */
+.stApp {
+    background: linear-gradient(180deg, #ECF9FF 0%, #FFFFFF 40%);
+}
+
+/* Headers */
+h1, h2, h3 {
+    color: #0b6e6b;
+}
+
+/* Buttons */
+.stButton>button {
+    background-color:#0B9F95;
+    color:white;
+    border-radius:8px;
+    padding:8px 16px;
+    font-size:16px;
+    border:none;
+}
+.stButton>button:hover {
+    background-color:#08746C;
+}
+
+/* Orange download buttons */
+.stDownloadButton>button {
+    background-color:#FF914D;
+    color:white;
+    border-radius:8px;
+    padding:8px 14px;
+    font-size:15px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+############################################################
+# 1. Sidebar — Process Params
+############################################################
+st.sidebar.header("⚙️ 製程參數 (Process Parameters)")
+
 viscosity = st.sidebar.number_input("材料黏度 (cps)", 50, 1000, 150, 10)
 lift_height = st.sidebar.number_input("抬升高度 (μm)", 500, 8000, 1500, 100)
 lift_speed = st.sidebar.number_input("抬升速度 (μm/s)", 100, 8000, 700, 50)
@@ -29,69 +77,48 @@ wait_time = st.sidebar.number_input("等待時間 (s)", 0.0, 5.0, 0.5, 0.1)
 down_speed = st.sidebar.number_input("下降速度 (μm/s)", 1000, 10000, 4000, 500)
 shape = st.sidebar.selectbox("形狀", ['90x45矩形', '90x50六角形', '50圓柱'])
 
-uploaded = st.sidebar.file_uploader("上傳切片 ZIP 檔", type=["zip"])
+uploaded = st.sidebar.file_uploader("📁 上傳切片 ZIP", type=["zip"])
 threshold = st.sidebar.slider("高風險判定閾值", 0.0, 1.0, 0.5, 0.01)
-run_btn = st.sidebar.button("開始分析")
+run_btn = st.sidebar.button("🚀 開始分析")
 
-# ---------------- session state init ----------------
+
+############################################################
+# 2. Session States
+############################################################
 if "results_df" not in st.session_state:
     st.session_state.results_df = None
 if "llm_results" not in st.session_state:
-    st.session_state.llm_results = {}  # layer -> text
-if "overlays" not in st.session_state:
-    st.session_state.overlays = []     # list of (layer, pil_image_bytes)
+    st.session_state.llm_results = {}
 if "auto_tune_results" not in st.session_state:
-    st.session_state.auto_tune_results = {}  # layer -> suggested params
+    st.session_state.auto_tune_results = {}
+if "overlays" not in st.session_state:
+    st.session_state.overlays = []
+st.session_state.threshold = threshold
 
-# ---------------- helper: fallback suggest_parameters ----------------
-def fallback_suggest_parameters(results_df, threshold=0.5):
-    """
-    如果 image_processor 沒有 suggest_parameters_for_layers_with_model，使用簡單 heuristic。
-    回傳 DataFrame with columns: layer, filename, orig_prob, suggested_params(dict), suggested_prob
-    """
-    rows = []
-    for _, r in results_df.iterrows():
-        orig = float(r["prob"])
-        layer = int(r["layer"])
-        fname = r["filename"]
-        suggested = None
-        suggested_prob = orig
-        if orig >= threshold:
-            # 簡單 heuristic: 增加 wait_time by +0.4s 及 slightly reduce lift_speed
-            base_wait = wait_time
-            cand = {"wait_time": round(base_wait + 0.4,3), "lift_height": lift_height, "lift_speed": max(50, lift_speed-50)}
-            suggested = cand
-            suggested_prob = max(0.0, orig - 0.12)
-        else:
-            suggested = {"wait_time": wait_time, "lift_height": lift_height, "lift_speed": lift_speed}
-            suggested_prob = orig
-        rows.append({"layer": layer, "filename": fname, "orig_prob": orig, "suggested_params": suggested, "suggested_prob": round(suggested_prob,4)})
-    return pd.DataFrame(rows)
 
-# ---------------- Run analysis when user clicks ----------------
+############################################################
+# 3. Run Analysis
+############################################################
 if run_btn:
     if uploaded is None:
-        st.sidebar.error("請先上傳切片 ZIP")
+        st.sidebar.error("❗ 請先上傳 ZIP")
     else:
         with tempfile.TemporaryDirectory() as tmpdir:
-            # 保存 ZIP
             zip_path = os.path.join(tmpdir, "slices.zip")
             with open(zip_path, "wb") as f:
                 f.write(uploaded.getbuffer())
 
             imgs, filenames = extract_images_from_zip(zip_path, tmpdir)
             if len(imgs) == 0:
-                st.error("ZIP 中未找到可解析影像。請檢查檔案。")
+                st.error("❌ ZIP 內無有效圖片")
             else:
-                st.success(f"讀取 {len(imgs)} 張切片")
-                # 提取幾何特徵
-                feats = batch_extract_features(imgs, filenames)  # list of dicts with layer, filename, area, perimeter, hydraulic_diameter
+                st.success(f"成功讀取 {len(imgs)} 張切片")
+                feats = batch_extract_features(imgs, filenames)
 
                 records = []
-                overlays = []
+                st.session_state.overlays = []
 
                 for img, feat in zip(imgs, feats):
-                    # 準備 model input
                     input_data = {
                         '材料黏度 (cps)': viscosity,
                         '抬升高度(μm)': lift_height,
@@ -106,26 +133,25 @@ if run_btn:
 
                     pred, importances = load_model_and_predict(pd.DataFrame([input_data]))
 
-                    # top3 feature names
+                    # Top 3 most important features
                     try:
                         sorted_imp = sorted(importances.items(), key=lambda x: x[1], reverse=True)
-                        top3_names = [name for name, _ in sorted_imp[:3]]
-                    except Exception:
-                        top3_names = []
+                        top3 = [name for name, _ in sorted_imp[:3]]
+                    except:
+                        top3 = []
 
                     records.append({
                         "layer": feat["layer"],
                         "filename": feat["filename"],
                         "prob": float(pred),
-                        "top3_features": ", ".join(top3_names),
+                        "top3_features": ", ".join(top3),
                         "params": input_data,
                         "importances": importances
                     })
 
                     # overlay for high risk
-                    if float(pred) >= threshold:
+                    if float(pred) >= st.session_state.threshold:
                         ov = overlay_issue_markers(img, float(pred))
-                        # save to bytes
                         buf = io.BytesIO()
                         ov.save(buf, format="PNG")
                         st.session_state.overlays.append((feat["layer"], buf.getvalue()))
@@ -134,129 +160,134 @@ if run_btn:
                 st.session_state.llm_results = {}
                 st.session_state.auto_tune_results = {}
 
-                st.success("逐層預測完成，請向下查看結果。")
+                st.success("分析完成 🎉 請查看下方結果")
 
-# -------------- UI: show results if available ----------------
+
+############################################################
+# 4. UI Tabs
+############################################################
 if st.session_state.results_df is not None:
-    df = st.session_state.results_df.copy()
 
-    # sort by prob desc for display
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📊 預測結果", "🔥 視覺化", "🧠 AI 建議", "📄 建議總覽"]
+    )
+
+    df = st.session_state.results_df.copy()
     df = df.sort_values("prob", ascending=False).reset_index(drop=True)
 
-    # Display simplified table (no params)
-    st.subheader("逐層預測結果 (Top: 高風險優先)")
-    show_df = df[["layer", "filename", "prob", "top3_features"]].copy()
-    show_df["prob"] = show_df["prob"].map(lambda x: f"{x:.3f}")
-    st.dataframe(show_df, use_container_width=True)
+    ############################################################
+    # TAB 1 — Prediction Table
+    ############################################################
+    with tab1:
+        st.header("📊 逐層預測結果（依風險排序）")
 
-    # ---------------- Heatmap and Risk Curve ----------------
-    st.subheader("Heatmap & 風險折線圖")
-    probs = df["prob"].values
-    # heatmap as 1xN for simplicity, plus risk curve
-    heat_fig = px.imshow(np.array([probs]), color_continuous_scale="RdYlGn_r", labels=dict(color="Failure Prob"))
-    heat_fig.update_yaxes(showticklabels=False)
-    st.plotly_chart(heat_fig, use_container_width=True)
+        show_df = df[["layer", "filename", "prob", "top3_features"]]
+        show_df["prob"] = show_df["prob"].apply(lambda x: f"{x:.3f}")
 
-    curve_fig = px.line(x=list(df["layer"]), y=probs, markers=True, labels={"x":"Layer","y":"Failure Prob"})
-    st.plotly_chart(curve_fig, use_container_width=True)
+        st.dataframe(show_df, use_container_width=True)
 
-    # ---------------- Overlays display ----------------
-    st.subheader("高風險層 Overlay（已標記）")
-    if len(st.session_state.overlays) == 0:
-        st.info("目前無高風險層。")
-    else:
-        cols = st.columns(3)
-        for idx, (layer, img_bytes) in enumerate(st.session_state.overlays):
-            with cols[idx % 3]:
-                st.image(img_bytes, caption=f"Layer {layer} (高風險)", use_column_width=True)
 
-    # ---------------- Auto-Tune (batch or per-layer) ----------------
-    st.subheader("Auto-Tune（候選參數測試）")
-    col_a, col_b = st.columns([1,2])
-    with col_a:
-        st.caption("按一次會對所有高風險層執行 Auto-Tune（會消耗時間）")
-        if st.button("一鍵 Auto-Tune 高風險層"):
-            # try to call image_processor.suggest_parameters_for_layers_with_model
-            try:
-                suggestion_df = suggest_parameters_for_layers_with_model(df, threshold=threshold, model_path="")
-            except Exception:
-                suggestion_df = fallback_suggest_parameters(df, threshold=threshold)
-            # map results to session
-            for _, r in suggestion_df.iterrows():
-                st.session_state.auto_tune_results[int(r["layer"])] = r["suggested_params"]
-            st.success("Auto-Tune 完成（結果已儲存於畫面）")
+    ############################################################
+    # TAB 2 — Visualizations: Heatmap + Overlay
+    ############################################################
+    with tab2:
+        st.header("🔥 視覺化 — Heatmap 與 Overlay")
 
-    with col_b:
-        st.caption("選擇要 Auto-Tune 的單層")
-        sel_layer = st.selectbox("選取層號（若要單層調整）", options=list(df["layer"].astype(int)))
-        if st.button("執行單層 Auto-Tune"):
-            try:
-                suggestion_df = suggest_parameters_for_layers_with_model(df[df["layer"]==sel_layer], threshold=threshold, model_path="")
-            except Exception:
-                suggestion_df = fallback_suggest_parameters(df[df["layer"]==sel_layer], threshold=threshold)
-            if len(suggestion_df) > 0:
-                r = suggestion_df.iloc[0]
-                st.session_state.auto_tune_results[int(r["layer"])] = r["suggested_params"]
-                st.success(f"Layer {r['layer']} Auto-Tune 建議已儲存。")
+        # --- Heatmap ---
+        st.subheader("Heatmap")
+        probs = df["prob"].values
+        heat = px.imshow(
+            np.array([probs]),
+            color_continuous_scale="RdYlGn_r",
+            labels={"color": "Failure Probability"}
+        )
+        heat.update_yaxes(showticklabels=False)
+        st.plotly_chart(heat, use_container_width=True)
 
-    # show auto-tune summary
-    if len(st.session_state.auto_tune_results) > 0:
-        at_list = [{"layer": k, "suggested_params": v} for k, v in st.session_state.auto_tune_results.items()]
-        st.table(pd.DataFrame(at_list))
+        # --- Curve ---
+        st.subheader("風險折線圖")
+        curve = px.line(
+            x=df["layer"], y=df["prob"],
+            markers=True,
+            labels={"x": "Layer", "y": "Failure Probability"}
+        )
+        st.plotly_chart(curve, use_container_width=True)
 
-    # ---------------- LLM suggestions: high-risk layers get a button ----------------
-    st.subheader("LLM 建議（高風險層可按按鈕生成）")
-    for _, row in df.iterrows():
-        layer = int(row["layer"])
-        st.markdown(f"**Layer {layer} — 風險 {row['prob']:.3f} — Top3: {row['top3_features']}**")
-
-        if row["prob"] < threshold:
-            st.markdown(get_low_risk_message())
+        # --- Overlays ---
+        st.subheader("高風險層 Overlay")
+        if len(st.session_state.overlays) == 0:
+            st.info("目前無高風險層")
         else:
-            btn_key = f"llm_gen_{layer}"
+            cols = st.columns(3)
+            for idx, (layer, img_bytes) in enumerate(st.session_state.overlays):
+                with cols[idx % 3]:
+                    st.image(img_bytes, caption=f"Layer {layer} (高風險)", use_column_width=True)
+
+
+    ############################################################
+    # TAB 3 — LLM Suggestions
+    ############################################################
+    with tab3:
+        st.header("🧠 AI 層級建議（按需生成）")
+
+        for _, row in df.iterrows():
+            layer = int(row["layer"])
+            prob = float(row["prob"])
+            high = (prob >= st.session_state.threshold)
+
+            st.markdown(f"### Layer {layer} — 風險 {prob:.3f}")
+
+            if not high:
+                st.markdown(get_low_risk_message())
+                continue
+
+            # High risk -> show button
+            btn_key = f"llm_btn_{layer}"
             if st.button(f"生成 Layer {layer} 建議", key=btn_key):
                 with st.spinner("LLM 正在生成建議..."):
                     txt = get_llm_recommendation(row["params"], row["importances"])
                     st.session_state.llm_results[layer] = txt
-            # display if exists
+
+            # Show result if generated
             if layer in st.session_state.llm_results:
                 st.markdown("**AI 建議：**")
                 st.markdown(st.session_state.llm_results[layer])
 
-    # ---------------- Suggestions summary table (all layers) ----------------
-    st.subheader("所有層建議總覽")
-    summary_rows = []
-    for _, row in df.iterrows():
-        layer = int(row["layer"])
-        suggestion = st.session_state.llm_results.get(layer, "（低風險，無需調整）")
-        suggested_params = st.session_state.auto_tune_results.get(layer, "—")
-        summary_rows.append({
-            "layer": layer,
-            "prob": round(row["prob"],3),
-            "top3_features": row["top3_features"],
-            "suggested_params": suggested_params,
-            "ai_suggestion": suggestion if isinstance(suggestion, str) else suggestion
-        })
-    summary_df = pd.DataFrame(summary_rows).sort_values("prob", ascending=False)
-    st.dataframe(summary_df, use_container_width=True)
 
-    # CSV download
-    csv_bytes = summary_df.to_csv(index=False).encode("utf-8")
-    st.download_button("下載建議總表 CSV", data=csv_bytes, file_name="suggestions_summary.csv", mime="text/csv")
+    ############################################################
+    # TAB 4 — Summary Table
+    ############################################################
+    with tab4:
+        st.header("📄 所有層建議總覽")
 
-    # ---------------- 顯示報告在頁面上 ----------------
-    st.subheader("📄 報告預覽（含 overlay 與 AI 建議）")
-    st.info("以下為逐層分析結果，直接顯示於頁面上，無需下載 PDF。")
-    
-    for _, r in summary_df.iterrows():
-        layer = int(r["layer"])
-        st.markdown(f"### Layer {layer} — 風險 {r['prob']:.3f}")
-        st.markdown(f"- **Top3 features:** {r['top3_features']}")
-        st.markdown(f"- **Suggested params:** {r['suggested_params']}")
-        st.markdown(f"- **AI Suggestion:** {r['ai_suggestion']}")
-    
-        # overlay 圖片
-        for (lay, img_bytes) in st.session_state.overlays:
-            if int(lay) == layer:
-                st.image(img_bytes, caption=f"Layer {layer} Overlay", use_column_width=True)
-                break
+        summary_rows = []
+        for _, row in df.iterrows():
+            layer = int(row["layer"])
+            prob = float(row["prob"])
+            high = (prob >= st.session_state.threshold)
+
+            ai_text = (
+                st.session_state.llm_results.get(layer, "（高風險，但尚未生成建議）")
+                if high else "（低風險，無需調整）"
+            )
+            suggested_params = st.session_state.auto_tune_results.get(layer, "—")
+
+            summary_rows.append({
+                "layer": layer,
+                "prob": round(prob, 3),
+                "top3_features": row["top3_features"],
+                "suggested_params": suggested_params,
+                "ai_suggestion": ai_text
+            })
+
+        summary_df = pd.DataFrame(summary_rows).sort_values("prob", ascending=False)
+        st.dataframe(summary_df, use_container_width=True)
+
+        # Download CSV
+        csv_bytes = summary_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📥 下載建議總表 CSV",
+            data=csv_bytes,
+            file_name="layerAI_suggestions.csv",
+            mime="text/csv"
+        )
