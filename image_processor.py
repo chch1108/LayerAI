@@ -1,116 +1,106 @@
-"""
-image_processor.py
-功能：處理多層切片 ZIP、提取幾何特徵（面積/周長/水力直徑）
-"""
-
-import zipfile
-import cv2
+import os, io, zipfile
 import numpy as np
-import os
 from PIL import Image
-import io
+from skimage.measure import perimeter as sk_perimeter
 
 
-# ============================================================
-# 1. 從 ZIP 中讀取每一層圖片
-# ============================================================
-def extract_images_from_zip(zip_path, extract_dir):
-    """
-    回傳：
-    imgs: [PIL.Image]
-    filenames: ["layer001.png" ...]
-    (會自動跳過非圖片或壞掉的檔案)
-    """
+# ---------------------------------------------------------
+# 1️⃣ 解壓 ZIP 並讀取圖片
+# ---------------------------------------------------------
+def extract_images_from_zip(zip_path, tmpdir):
     imgs = []
     filenames = []
 
     with zipfile.ZipFile(zip_path, "r") as z:
         for name in sorted(z.namelist()):
-
-            # 跳過 macOS 系統資料夾
-            if name.startswith("__MACOSX") or name.startswith(".DS_Store"):
-                continue
-
-            # 只接受真正影像副檔名
-            if not name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
-                continue
-
-            try:
+            if name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
                 data = z.read(name)
-                img = Image.open(io.BytesIO(data))
-                img = img.convert("L")   # 灰階
-            except Exception:
-                # 無法解析 → 跳過
-                print(f"[WARN] ZIP 內跳過無法讀取影像：{name}")
-                continue
-
-            imgs.append(img)
-            filenames.append(name)
+                try:
+                    img = Image.open(io.BytesIO(data)).convert("L")
+                    imgs.append(img)
+                    filenames.append(name)
+                except Exception:
+                    # 忽略無法開啟的檔案
+                    continue
 
     return imgs, filenames
 
 
-# ============================================================
-# 2. 計算幾何特徵（面積 / 周長 / 水力直徑）
-# ============================================================
-def extract_geometric_features_from_image(pil_img):
-    """
-    與單層版本 extract_geometric_features() 同邏輯
-    """
+# ---------------------------------------------------------
+# 2️⃣ 計算幾何特徵（面積 / 周長 / 水力直徑）
+# ---------------------------------------------------------
+def compute_geometry(img):
+    arr = np.array(img)
+    binary = (arr < 128).astype(np.uint8)  # simple threshold
 
-    # PIL → numpy
-    img = np.array(pil_img)
+    area = np.sum(binary)
 
-    # 二值化
-    _, binary = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY_INV)
+    try:
+        peri = sk_perimeter(binary, neighbourhood=8)
+    except Exception:
+        peri = 0.0
 
-    # 找輪廓
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if len(contours) == 0:
-        return None
-
-    cnt = max(contours, key=cv2.contourArea)
-
-    area = cv2.contourArea(cnt)  # 面積
-    perimeter = cv2.arcLength(cnt, True)  # 周長
-
-    # 水力直徑 D_h = 4A/P
-    if perimeter > 0:
-        hydraulic_diameter = 4 * area / perimeter
+    if peri > 0:
+        hydraulic_d = 4 * area / peri
     else:
-        hydraulic_diameter = 0
+        hydraulic_d = 0.0
 
-    return {
-        "area": float(area),
-        "perimeter": float(perimeter),
-        "hydraulic_diameter": float(hydraulic_diameter)
-    }
+    return float(area), float(peri), float(hydraulic_d)
 
 
-# ============================================================
-# 3. 批次特徵提取（多層）
-# ============================================================
+# ---------------------------------------------------------
+# 3️⃣ 批次特徵擷取（給多層 ZIP 使用）
+# ---------------------------------------------------------
 def batch_extract_features(imgs, filenames):
-    """
-    回傳：
-    [
-      {"layer":1, "filename":"xxx.png", "area":..., "perimeter":..., "hydraulic_diameter":...},
-      ...
-    ]
-    """
-    feature_list = []
-
+    results = []
     for i, (img, fname) in enumerate(zip(imgs, filenames)):
-        feats = extract_geometric_features_from_image(img)
-
-        if feats is None:
-            feats = {"area": 0, "perimeter": 0, "hydraulic_diameter": 0}
-
-        feature_list.append({
-            "layer": i + 1,
+        area, peri, hd = compute_geometry(img)
+        results.append({
+            "layer": i,
             "filename": fname,
-            **feats
+            "area": area,
+            "perimeter": peri,
+            "hydraulic_diameter": hd
+        })
+    return results
+
+
+# ---------------------------------------------------------
+# 4️⃣ Auto-Tune（如果 app.py 呼叫但未定義 -> fallback）
+# ---------------------------------------------------------
+def suggest_parameters_for_layers_with_model(results_df, threshold=0.5, model_path=None):
+    """
+    這裡使用簡易 heuristic：增加等待時間、微調抬升速度
+    app.py 若無需真實模型，這個即可提供基本功能
+    """
+    rows = []
+
+    for _, r in results_df.iterrows():
+        orig = float(r["prob"])
+        layer = int(r["layer"])
+
+        if orig >= threshold:
+            sugg = {
+                "wait_time": 0.8,
+                "lift_speed":  max(100,  r["params"]["抬升速度(μm/s)"] - 80),
+                "lift_height": r["params"]["抬升高度(μm)"]
+            }
+            sugg_prob = max(0.0, orig - 0.15)
+        else:
+            sugg = {
+                "wait_time": r["params"]["等待時間(s)"],
+                "lift_speed": r["params"]["抬升速度(μm/s)"],
+                "lift_height": r["params"]["抬升高度(μm)"]
+            }
+            sugg_prob = orig
+
+        rows.append({
+            "layer": layer,
+            "filename": r["filename"],
+            "orig_prob": orig,
+            "suggested_params": sugg,
+            "suggested_prob": sugg_prob
         })
 
-    return feature_list
+    import pandas as pd
+    return pd.DataFrame(rows)
