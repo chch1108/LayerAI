@@ -13,7 +13,7 @@ import google.generativeai as genai
 # -------------------------------
 # 1. API KEY 配置
 # -------------------------------
-API_KEY = os.getenv("GOOGLE_API_KEY")
+API_KEY = os.getenv("GENAI_API_KEY")
 
 if API_KEY is None:
     print("[WARNING] GOOGLE_API_KEY 未設定，LLM 將無法正常運作。請至環境變數或 Streamlit Secrets 設定。")
