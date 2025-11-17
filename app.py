@@ -12,6 +12,8 @@ import numpy as np
 import plotly.express as px
 from PIL import Image
 
+from image_editor_level1 import flow_simulation_overlay
+
 # === Internal modules ===
 from image_processor import (
     extract_images_from_zip,
@@ -151,7 +153,7 @@ if run_btn:
 
                     # overlay for high risk
                     if float(pred) >= st.session_state.threshold:
-                        ov = overlay_issue_markers(img, float(pred))
+                        ov = flow_simulation_overlay(img)
                         buf = io.BytesIO()
                         ov.save(buf, format="PNG")
                         st.session_state.overlays.append((feat["layer"], buf.getvalue()))
