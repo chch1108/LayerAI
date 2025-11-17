@@ -12,8 +12,6 @@ import numpy as np
 import plotly.express as px
 from PIL import Image
 
-from image_editor_level1 import flow_simulation_overlay
-
 # === Internal modules ===
 from image_processor import (
     extract_images_from_zip,
@@ -22,7 +20,7 @@ from image_processor import (
 )
 from model_train import load_model_and_predict
 from llm_recommender import get_llm_recommendation, get_low_risk_message
-from image_editor_level1 import overlay_issue_markers
+from image_editor_level1 import flow_simulation_overlay
 
 
 ############################################################
