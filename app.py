@@ -25,7 +25,7 @@ from image_editor_level1 import flow_simulation_overlay
 ############################################################
 # 0. Global UI Theme / CSS
 ############################################################
-st.set_page_config(layout="wide", page_title="LayerAI — Competition Edition")
+st.set_page_config(layout="wide", page_title="LayerAI")
 
 st.markdown("""
 <style>
@@ -99,7 +99,7 @@ st.session_state.threshold = threshold
 ############################################################
 if run_btn:
     if uploaded is None:
-        st.sidebar.error("❗ 請先上傳 ZIP")
+        st.sidebar.error("請先上傳 ZIP")
     else:
         with tempfile.TemporaryDirectory() as tmpdir:
             zip_path = os.path.join(tmpdir, "slices.zip")
@@ -158,7 +158,7 @@ if run_btn:
                 st.session_state.llm_results = {}
                 st.session_state.auto_tune_results = {}
 
-                st.success("分析完成 🎉 請查看下方結果")
+                st.success("分析完成～ 請查看下方結果")
 
 
 ############################################################
@@ -167,7 +167,7 @@ if run_btn:
 if st.session_state.results_df is not None:
 
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 預測結果", "🔥 視覺化", "🧠 AI 建議", "📄 建議總覽"]
+        ["📊 預測結果", "✨ 視覺化", "💡 AI 建議", "📄 建議總覽"]
     )
 
     df = st.session_state.results_df.copy()
@@ -189,7 +189,7 @@ if st.session_state.results_df is not None:
     # TAB 2 — Visualizations: Heatmap + Overlay
     ############################################################
     with tab2:
-        st.header("🔥 視覺化 — Heatmap 與 Overlay")
+        st.header("✨ 視覺化 — Heatmap 與 Overlay")
 
         # --- Heatmap ---
         st.subheader("Heatmap")
@@ -226,7 +226,7 @@ if st.session_state.results_df is not None:
     # TAB 3 — LLM Suggestions
     ############################################################
     with tab3:
-        st.header("🧠 AI 層級建議（按需生成）")
+        st.header("💡 AI 層級建議")
 
         for _, row in df.iterrows():
             layer = int(row["layer"])
