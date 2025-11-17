@@ -15,6 +15,112 @@ from model_train import load_model_and_predict
 from llm_recommender import get_llm_recommendation, get_low_risk_message
 from image_editor_level1 import flow_simulation_overlay  # new overlay
 
+# ---------------------- THEME CSS ----------------------
+def apply_theme():
+    theme_css = """
+    <style>
+    /* Main app background */
+    .stApp {
+        background: #f8f4ff;
+        color: #3a0ca3 !important;
+        font-family: 'Inter', sans-serif;
+    }
+
+    /* Title gradient */
+    h1, h2, h3 {
+        font-family: 'Inter', sans-serif !important;
+    }
+
+    h1 {
+        background: linear-gradient(90deg, #7B2CBF, #B5179E, #F72585);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 900 !important;
+        padding-bottom: 8px;
+    }
+
+    /* Sidebar styling */
+    .css-1d391kg, .stSidebar {
+        background-color: #ede7ff !important;
+    }
+
+    .stSidebar h2, .stSidebar h3, .stSidebar h4 {
+        color: #560bad !important;
+    }
+
+    /* Buttons */
+    .stButton>button {
+        background: linear-gradient(135deg, #7209B7, #B5179E) !important;
+        color: white !important;
+        border-radius: 10px !important;
+        padding: 0.6rem 1.2rem !important;
+        font-weight: 600 !important;
+        border: none !important;
+    }
+
+    .stButton>button:hover {
+        background: linear-gradient(135deg, #560bad, #9d174d) !important;
+    }
+
+    /* Download button */
+    .stDownloadButton>button {
+        background: #4361EE !important;
+        color: white !important;
+        border-radius: 10px !important;
+        border: none !important;
+        padding: 0.5rem 1rem !important;
+        font-weight: 600 !important;
+    }
+
+    .stDownloadButton>button:hover {
+        background: #3b46d1 !important;
+    }
+
+    /* Card style */
+    .card {
+        background: white;
+        border-radius: 14px;
+        padding: 1rem;
+        box-shadow: 0px 4px 16px rgba(123, 44, 191, 0.2);
+        margin-bottom: 1rem;
+    }
+
+    /* DataFrame rounding */
+    .dataframe {
+        border-radius: 12px !important;
+        overflow: hidden !important;
+    }
+
+    /* Accent text */
+    .highlight {
+        color: #B5179E !important;
+        font-weight: 700;
+    }
+
+    /* Tabs */
+    .stTabs [role="tablist"] button {
+        font-weight: 600 !important;
+        color: #560bad !important;
+    }
+
+    .stTabs [role="tab"][aria-selected="true"] {
+        border-bottom: 3px solid #F72585 !important;
+        color: #F72585 !important;
+    }
+
+    /* Fix plot background */
+    .plotly-chart {
+        background: white !important;
+        border-radius: 12px;
+        padding: 10px;
+    }
+    </style>
+    """
+    st.markdown(theme_css, unsafe_allow_html=True)
+
+# Apply theme
+apply_theme()
+
 # ----------------- Page config & dark theme -----------------
 st.set_page_config(page_title="LayerAI — Dark Industrial", layout="wide")
 st.markdown(
