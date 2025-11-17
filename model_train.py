@@ -12,7 +12,6 @@ FEATURE_COLUMNS = [
     '抬升速度(μm/s)',
     '等待時間(s)',
     '下降速度((μm)/s)',
-    '形狀',               # 若為分類請 one-hot encode 或 map to int
     '面積(mm?)',
     '周長(mm)',
     '水力直徑(mm)'
