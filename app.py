@@ -1,5 +1,5 @@
 import streamlit as st
-import tempfile, os, io
+import tempfile, os
 import pandas as pd
 
 from image_processor import extract_images_from_zip, batch_extract_features
@@ -29,15 +29,27 @@ uploaded = st.file_uploader("上傳切片 ZIP 檔案", type=["zip"])
 threshold = st.slider("高風險判定閾值（模型預測機率）", 0.0, 1.0, 0.5, 0.01)
 run_btn = st.button("開始分析 (Run)")
 
+# -----------------------------------------------------
+# 初始化 session_state
+# -----------------------------------------------------
+if "results_df" not in st.session_state:
+    st.session_state.results_df = None
+
+if "llm_results" not in st.session_state:
+    st.session_state.llm_results = {}   # { layer : "建議文字" }
+
 
 # -----------------------------------------------------
-# 主流程
+# 第一次按下 run_btn 時 — 做完整分析並把結果存起來
 # -----------------------------------------------------
-if uploaded and run_btn:
+if run_btn:
+
+    if not uploaded:
+        st.error("請上傳 ZIP 檔")
+        st.stop()
 
     with tempfile.TemporaryDirectory() as tmpdir:
 
-        # ---------------- 解壓 ZIP ----------------
         zip_path = os.path.join(tmpdir, "layers.zip")
         with open(zip_path, "wb") as f:
             f.write(uploaded.getbuffer())
@@ -45,21 +57,14 @@ if uploaded and run_btn:
         imgs, filenames = extract_images_from_zip(zip_path, tmpdir)
 
         if len(imgs) == 0:
-            st.error("❌ ZIP 內沒有有效的圖片，請檢查檔案內容。")
+            st.error("❌ ZIP 內沒有有效圖片")
             st.stop()
 
-        st.success(f"📂 成功讀取 {len(imgs)} 層切片")
-
-        # ---------------- 提取每層特徵 ----------------
-        st.info("🔍 正在提取幾何特徵...")
         features_list = batch_extract_features(imgs, filenames)
 
+        # ---- 做逐層模型預測 ----
         records = []
-        st.info("🤖 正在逐層執行模型預測...")
 
-        # -----------------------------------------------------
-        # 每層 = 幾何特徵 + 使用者輸入的製程參數
-        # -----------------------------------------------------
         for feat in features_list:
 
             input_data = {
@@ -74,7 +79,6 @@ if uploaded and run_btn:
                 '水力直徑(mm)': feat['hydraulic_diameter'],
             }
 
-            # 隨機森林預測
             pred, importances = load_model_and_predict(pd.DataFrame([input_data]))
 
             records.append({
@@ -85,41 +89,47 @@ if uploaded and run_btn:
                 "importances": importances
             })
 
-        df = pd.DataFrame(records)
+        # 存進 session_state
+        st.session_state.results_df = pd.DataFrame(records)
+        st.session_state.llm_results = {}  # 清空舊建議
+        
+        st.success("分析完成！請往下看結果 👇")
 
-        st.subheader("📘 逐層模型預測結果")
-        st.dataframe(df)
 
+# -----------------------------------------------------
+# 顯示結果（無論是否 rerun，都會顯示）
+# -----------------------------------------------------
+if st.session_state.results_df is not None:
 
-        # -----------------------------------------------------
-        # LLM 建議功能
-        # -----------------------------------------------------
-        st.subheader("🤖 LLM 建議（高風險才提供按鈕）")
+    df = st.session_state.results_df
 
-        # 存放每層的 LLM 建議
-        if "llm_results" not in st.session_state:
-            st.session_state.llm_results = {}
+    st.subheader("📘 逐層模型預測結果")
+    st.dataframe(df)
 
-        for _, row in df.iterrows():
+    # -----------------------------------------------------
+    # LLM 建議
+    # -----------------------------------------------------
+    st.subheader("🤖 LLM 建議（高風險才提供按鈕）")
 
-            layer = int(row["layer"])
-            st.markdown(f"### Layer {layer} — 風險機率：**{row['prob']:.3f}**")
+    for _, row in df.iterrows():
 
-            # ---------------- 低風險層：固定結論 ----------------
-            if row["prob"] < threshold:
-                st.markdown(get_low_risk_message())
-                continue
+        layer = int(row["layer"])
+        st.markdown(f"### Layer {layer} — 風險機率：**{row['prob']:.3f}**")
 
-            # ---------------- 高風險層：提供按鈕 ----------------
-            btn_key = f"gen_btn_{layer}"
+        # ---- 低風險層固定結論 ----
+        if row["prob"] < threshold:
+            st.markdown(get_low_risk_message())
+            continue
 
-            if st.button(f"🔧 生成 Layer {layer} 的 AI 建議", key=btn_key):
-                with st.spinner("AI 正在生成建議..."):
-                    st.session_state.llm_results[layer] = get_llm_recommendation(
-                        row["params"], row["importances"]
-                    )
+        # ---- 高風險層 → 按鈕生成建議 ----
+        btn_key = f"gen_btn_{layer}"
+        if st.button(f"🔧 生成 Layer {layer} 的 AI 建議", key=btn_key):
+            with st.spinner("AI 正在生成建議..."):
+                st.session_state.llm_results[layer] = get_llm_recommendation(
+                    row["params"], row["importances"]
+                )
 
-            # 若已生成 → 持續顯示，不會消失
-            if layer in st.session_state.llm_results:
-                st.markdown("**AI 建議：**")
-                st.markdown(st.session_state.llm_results[layer])
+        # 若生成過 → 永遠顯示，不會消失
+        if layer in st.session_state.llm_results:
+            st.markdown("**AI 建議：**")
+            st.markdown(st.session_state.llm_results[layer])
