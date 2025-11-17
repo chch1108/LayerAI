@@ -1,16 +1,19 @@
 import streamlit as st
-import tempfile, os
+import tempfile, os, io
 import pandas as pd
+import numpy as np
+import plotly.express as px
 
 from image_processor import extract_images_from_zip, batch_extract_features
 from model_train import load_model_and_predict
 from llm_recommender import get_llm_recommendation, get_low_risk_message
+from image_editor_level1 import overlay_issue_markers   # 影像 overlay
 
 # -----------------------------------------------------
 # Streamlit 設定
 # -----------------------------------------------------
 st.set_page_config(layout="wide", page_title="LayerAI — 多層樹脂回流預測")
-st.title("LayerAI — 多層樹脂回流預測 + 風險分析")
+st.title("LayerAI — 多層樹脂回流預測 + 視覺化 + 建議引擎（比賽版）")
 
 # -----------------------------------------------------
 # 使用者輸入 — 製程參數
@@ -34,13 +37,11 @@ run_btn = st.button("開始分析 (Run)")
 # -----------------------------------------------------
 if "results_df" not in st.session_state:
     st.session_state.results_df = None
-
 if "llm_results" not in st.session_state:
-    st.session_state.llm_results = {}   # { layer : "建議文字" }
-
+    st.session_state.llm_results = {}   # { layer: 建議 }
 
 # -----------------------------------------------------
-# 第一次按下 run_btn 時 — 做完整分析並把結果存起來
+# 第一次按下 run_btn 時 — 做完整分析
 # -----------------------------------------------------
 if run_btn:
 
@@ -64,8 +65,9 @@ if run_btn:
 
         # ---- 做逐層模型預測 ----
         records = []
+        overlays = []     # 存高風險圖片 overlay
 
-        for feat in features_list:
+        for img, feat in zip(imgs, features_list):
 
             input_data = {
                 '材料黏度 (cps)': viscosity,
@@ -81,30 +83,66 @@ if run_btn:
 
             pred, importances = load_model_and_predict(pd.DataFrame([input_data]))
 
-            records.append({
+            # ---- importance 取前 3 ----
+            sorted_imp = sorted(importances.items(), key=lambda x: x[1], reverse=True)
+            top3_names = [name for name, _ in sorted_imp[:3]]
+
+            record = {
                 "layer": feat['layer'],
                 "filename": feat['filename'],
                 "prob": pred,
-                "params": input_data,
-                "importances": importances
-            })
+                "top3_features": ", ".join(top3_names),
+                "params": input_data,        # 不顯示，但 LLM 要用
+                "importances": importances   # 不顯示細節，但 LLM 要用
+            }
+            records.append(record)
+
+            # ------ Overlay for high-risk ------
+            if pred >= threshold:
+                overlays.append((feat['layer'], overlay_issue_markers(img)))
 
         # 存進 session_state
         st.session_state.results_df = pd.DataFrame(records)
-        st.session_state.llm_results = {}  # 清空舊建議
-        
+        st.session_state.llm_results = {}
+        st.session_state.overlays = overlays
+
         st.success("分析完成！請往下看結果 👇")
 
-
 # -----------------------------------------------------
-# 顯示結果（無論是否 rerun，都會顯示）
+# 顯示結果（永不消失）
 # -----------------------------------------------------
 if st.session_state.results_df is not None:
 
     df = st.session_state.results_df
 
-    st.subheader("📘 逐層模型預測結果")
-    st.dataframe(df)
+    st.subheader("📘 逐層模型預測結果（已經簡化欄位）")
+    st.dataframe(df[["layer", "filename", "prob", "top3_features"]])
+
+    # -----------------------------------------------------
+    # Heatmap（視覺衝擊）
+    # -----------------------------------------------------
+    st.subheader("🔥 逐層風險 Heatmap")
+
+    fig = px.imshow(
+        np.array(df["prob"]).reshape(1, -1),
+        color_continuous_scale="RdYlGn_r",
+        labels=dict(color="Failure Probability")
+    )
+    fig.update_yaxes(showticklabels=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------------------------
+    # Overlay 高風險層圖片
+    # -----------------------------------------------------
+    if len(st.session_state.overlays) > 0:
+        st.subheader("⚠️ 高風險層（Overlay 標記）")
+
+        cols = st.columns(3)
+        idx = 0
+        for layer, overlay_img in st.session_state.overlays:
+            with cols[idx % 3]:
+                st.image(overlay_img, caption=f"Layer {layer}（高風險）")
+            idx += 1
 
     # -----------------------------------------------------
     # LLM 建議
@@ -116,12 +154,12 @@ if st.session_state.results_df is not None:
         layer = int(row["layer"])
         st.markdown(f"### Layer {layer} — 風險機率：**{row['prob']:.3f}**")
 
-        # ---- 低風險層固定結論 ----
+        # ---- 低風險層 ----
         if row["prob"] < threshold:
             st.markdown(get_low_risk_message())
             continue
 
-        # ---- 高風險層 → 按鈕生成建議 ----
+        # ---- 高風險層：按鈕產生建議 ----
         btn_key = f"gen_btn_{layer}"
         if st.button(f"🔧 生成 Layer {layer} 的 AI 建議", key=btn_key):
             with st.spinner("AI 正在生成建議..."):
@@ -129,7 +167,33 @@ if st.session_state.results_df is not None:
                     row["params"], row["importances"]
                 )
 
-        # 若生成過 → 永遠顯示，不會消失
+        # 顯示建議（若已生成）
         if layer in st.session_state.llm_results:
             st.markdown("**AI 建議：**")
             st.markdown(st.session_state.llm_results[layer])
+
+    # -----------------------------------------------------
+    # 建議總表
+    # -----------------------------------------------------
+    st.subheader("📑 所有層建議總覽")
+
+    summary = []
+    for _, row in df.iterrows():
+        layer = int(row["layer"])
+        if layer in st.session_state.llm_results:
+            summary.append({
+                "layer": layer,
+                "prob": row["prob"],
+                "top3_features": row["top3_features"],
+                "AI_suggestion": st.session_state.llm_results[layer]
+            })
+        else:
+            summary.append({
+                "layer": layer,
+                "prob": row["prob"],
+                "top3_features": row["top3_features"],
+                "AI_suggestion": "（低風險，無需調整）"
+            })
+
+    summary_df = pd.DataFrame(summary)
+    st.dataframe(summary_df)
