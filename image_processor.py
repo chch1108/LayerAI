@@ -19,17 +19,33 @@ def extract_images_from_zip(zip_path, extract_dir):
     回傳：
     imgs: [PIL.Image]
     filenames: ["layer001.png" ...]
+    (會自動跳過非圖片或壞掉的檔案)
     """
     imgs = []
     filenames = []
 
     with zipfile.ZipFile(zip_path, "r") as z:
         for name in sorted(z.namelist()):
-            if name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
+
+            # 跳過 macOS 系統資料夾
+            if name.startswith("__MACOSX") or name.startswith(".DS_Store"):
+                continue
+
+            # 只接受真正影像副檔名
+            if not name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
+                continue
+
+            try:
                 data = z.read(name)
-                img = Image.open(io.BytesIO(data)).convert("L")
-                imgs.append(img)
-                filenames.append(name)
+                img = Image.open(io.BytesIO(data))
+                img = img.convert("L")   # 灰階
+            except Exception:
+                # 無法解析 → 跳過
+                print(f"[WARN] ZIP 內跳過無法讀取影像：{name}")
+                continue
+
+            imgs.append(img)
+            filenames.append(name)
 
     return imgs, filenames
 
