@@ -1,56 +1,93 @@
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+import math
+import io
 
-def overlay_issue_markers(img: Image.Image, risk_score: float) -> Image.Image:
+FONT = None
+
+def _load_font(size=16):
+    global FONT
+    try:
+        from PIL import ImageFont
+        FONT = ImageFont.truetype("DejaVuSans.ttf", size)
+    except Exception:
+        FONT = None
+
+def overlay_issue_markers(pil_img, risk_score=None):
     """
-    Level 1：在影像上畫出風險標記（黃色外框 + 文字）
-    用於視覺化「需要修正的層」。
+    改良版 overlay：
+    - 只在有問題的局部區塊畫 box
+    - 判斷標準：大面積 (佔比), 長細比 (aspect ratio), 尖角 (approx poly vertices)
     """
+    if FONT is None:
+        _load_font(14)
 
-    # 轉成可畫圖格式
-    img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_GRAY2BGR)
-
+    img_cv = cv2.cvtColor(np.array(pil_img), cv2.COLOR_GRAY2BGR)
     h, w = img_cv.shape[:2]
 
-    # 高風險 → 紅框
-    # 中風險 → 黃框
-    # 低風險 → 綠框（仍可顯示但表示無需調整）
-    if risk_score >= 0.50:
-        color = (0, 0, 255)     # Red
-        label = "High Risk"
-    elif risk_score >= 0.20:
-        color = (0, 255, 255)   # Yellow
-        label = "Medium Risk"
-    else:
-        color = (0, 255, 0)     # Green
-        label = "Low Risk"
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
 
-    # 畫框
-    cv2.rectangle(img_cv, (5, 5), (w - 5, h - 5), color, 3)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 標記文字
-    cv2.putText(img_cv, f"{label} ({risk_score:.2f})",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8, color, 2)
+    # compute image area
+    img_area = w * h
+    issues = []
 
-    return Image.fromarray(img_cv)
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < 10:  # ignore tiny specks
+            continue
+        x, y, cw, ch = cv2.boundingRect(cnt)
+        # aspect ratio
+        ar = cw / (ch + 1e-6)
+        # polygon vertices
+        peri = cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+        verts = len(approx)
 
+        reason = []
+        # large area threshold (relative)
+        if area / img_area > 0.02:  # >2% of image area
+            reason.append("大面積")
+        # narrow long piece
+        if ar > 3 or ar < 0.33:
+            reason.append("細長/高長寬比")
+        # many vertices -> complex/尖角
+        if verts >= 6:
+            reason.append("形狀複雜/尖角")
+        if len(reason) > 0:
+            issues.append((x, y, cw, ch, reason, area))
 
-def save_modified_images(filenames, images, probs, output_dir):
-    """
-    儲存所有修改後的圖片，供 ZIP 打包用
-    """
+    # if no issues, and risk_score low: return small green badge instead
+    pil_out = Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_out)
 
-    modified_files = []
+    if not issues:
+        # draw small corner badge
+        badge_text = f"Risk: {risk_score:.2f}" if risk_score is not None else "OK"
+        text_pos = (10, 10)
+        draw.rectangle([text_pos, (text_pos[0]+140, text_pos[1]+26)], fill=(15,160,90,200))
+        draw.text((text_pos[0]+6, text_pos[1]+4), badge_text, fill="white", font=FONT)
+        return pil_out
 
-    for fname, img, p in zip(filenames, images, probs):
+    # draw boxes and labels for each issue
+    for (x, y, cw, ch, reason, area) in issues:
+        # choose color based on severity (area percentage)
+        severity = min(1.0, (area / img_area) * 50)
+        # interpolate red->orange
+        color = (255, int(180*(1-severity)), 0)
+        # draw rectangle
+        draw.rectangle([x, y, x+cw, y+ch], outline=color, width=4)
+        # label
+        label = ",".join(reason)
+        # shrink label if too long
+        if len(label) > 30:
+            label = label[:27] + "..."
+        tx = x
+        ty = max(0, y-18)
+        draw.rectangle([tx, ty, tx+len(label)*7+8, ty+16], fill=(0,0,0,150))
+        draw.text((tx+4, ty+1), label, fill="white", font=FONT)
 
-        modified = overlay_issue_markers(img, p)
-        save_path = f"{output_dir}/{fname}"
-        modified.save(save_path)
-
-        modified_files.append(save_path)
-
-    return modified_files
+    return pil_out
