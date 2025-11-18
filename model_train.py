@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
-MODEL_PATH = os.path.join("model_artifacts", "rf_model.joblib")
+MODEL_PATH = os.path.join("model_artifacts", "dlp_reflow_model.joblib")
 
 # 目前模型不使用 shape
 FEATURE_COLUMNS = [
