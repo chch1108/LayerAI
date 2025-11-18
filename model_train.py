@@ -53,34 +53,18 @@ def load_model():
             print(f"[WARN] 無法載入或訓練模型: {e}")
             return None
 
-def load_model_and_predict(input_df):
-    """
-    input_df: pd.DataFrame with columns matching FEATURE_COLUMNS
-    returns: (probability_of_failure (float), importances_dict)
-    """
-    model = load_model()
+def load_model_and_predict(input_df, model_path=MODEL_PATH):
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"❌ 找不到模型檔案：{model_path}")
+
+    model = joblib.load(model_path)
     X = _prepare_X(input_df)
 
-    if model is None:
-        # fallback heuristic: 用 input 數值簡單計算概率
-        X_sum = X.sum(axis=1).values[0]
-        prob = float(np.clip(0.2 + 0.00005 * X_sum, 0.01, 0.9))
-        importances = {c: 1.0/len(X.columns) for c in X.columns}
-        return prob, importances
+    probs = model.predict_proba(X)[:, 1]
+    prob = float(np.clip(probs[0], 0.0, 1.0))
 
-    # 使用模型預測
-    if hasattr(model, "predict_proba"):
-        probs = model.predict_proba(X)[:, 1]
-        prob = float(probs[0])
-    else:
-        pred = model.predict(X)[0]
-        prob = 1.0 if pred == 1 else 0.0
-
-    # feature importances
-    try:
-        fi = model.feature_importances_
-        importances = {col: float(fi[idx]) for idx, col in enumerate(X.columns)}
-    except:
-        importances = {col: 1.0/len(X.columns) for col in X.columns}
+    # importances
+    fi = model.feature_importances_
+    importances = {c: float(fi[i]) for i, c in enumerate(FEATURE_COLUMNS)}
 
     return prob, importances
