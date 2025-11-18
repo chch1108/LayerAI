@@ -19,6 +19,9 @@ from image_processor import (
     suggest_parameters_for_layers_with_model,
 )
 from model_train import load_model_and_predict
+
+MODEL_PATH = "model_artifacts/dlp_reflow_model.joblib"
+
 from llm_recommender import get_llm_recommendation, get_low_risk_message
 from image_editor_level1 import flow_simulation_overlay
 
@@ -129,7 +132,10 @@ if run_btn:
                     }
 
 
-                    pred, importances = load_model_and_predict(pd.DataFrame([input_data]))
+                    pred, importances = load_model_and_predict(
+                        pd.DataFrame([input_data]),
+                        model_path=MODEL_PATH
+                    )
 
                     # Top 3 most important features
                     try:
